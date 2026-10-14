@@ -1,0 +1,98 @@
+# ---------------------------------------------------------------------------
+# Deterministic security rule configuration.
+#
+# Rule logic lives in src/docker_security_agent/security/rules.py; this file
+# controls which rules run, their severities, and the lists they match on.
+# Rule IDs:  C = container, N = network, R = resources, S = secrets hygiene,
+#            I = image, V = vulnerabilities (scanner).
+# ---------------------------------------------------------------------------
+
+# Rules listed here are skipped entirely.
+disabled_rules: []
+
+# Override a rule's default severity: { RULE_ID: critical|high|medium|low|info }
+severity_overrides: {}
+
+# Analyse stopped containers too (they can be started again at any time).
+include_stopped_containers: true
+
+# Containers whose name matches any of these globs are ignored. The audit's own
+# socket proxy is excluded: it mounts the Docker socket by design.
+ignore_containers:
+  - docker-audit-socket-proxy
+
+# Linux capabilities that materially weaken isolation, with the severity used
+# when a container adds them (CapAdd). ALL is equivalent to --privileged.
+dangerous_capabilities:
+  ALL: critical
+  SYS_ADMIN: critical
+  SYS_MODULE: critical
+  SYS_RAWIO: high
+  SYS_PTRACE: high
+  DAC_READ_SEARCH: high
+  BPF: high
+  PERFMON: medium
+  NET_ADMIN: medium
+  NET_RAW: medium
+  SYS_TIME: medium
+  MKNOD: low
+  AUDIT_CONTROL: medium
+
+# Paths on the Docker socket that grant control of the Docker daemon.
+docker_socket_paths:
+  - /var/run/docker.sock
+  - /run/docker.sock
+  - /var/run/docker
+  - /run/containerd/containerd.sock
+
+# Host paths that are sensitive when bind-mounted into a container.
+# A bind mount matches if its source equals one of these paths or is below it
+# ("/" only matches itself, otherwise every path would match).
+sensitive_host_paths:
+  - /
+  - /etc
+  - /proc
+  - /sys
+  - /dev
+  - /boot
+  - /root
+  - /var/lib/docker
+  - /var/log
+  - /lib/modules
+  - /usr
+  - /run
+  - /private/etc   # macOS
+
+# Home directories: mounting a whole home directory (e.g. /Users/alice) or a
+# credential directory inside it is sensitive; ordinary project/data
+# directories below a home directory are NOT (on macOS every bind mount lives
+# under /Users, so flagging all of them would be noise).
+home_directory_roots:
+  - /home
+  - /Users
+sensitive_home_subpaths:
+  - .ssh
+  - .docker
+  - .aws
+  - .azure
+  - .kube
+  - .gnupg
+  - .config/gcloud
+  - Library/Keychains
+
+# Environment variable NAMES that suggest a credential is passed via env.
+# Only the name is reported, never the value.
+secret_env_name_patterns:
+  - "*PASSWORD*"
+  - "*PASSWD*"
+  - "*SECRET*"
+  - "*TOKEN*"
+  - "*API_KEY*"
+  - "*APIKEY*"
+  - "*PRIVATE_KEY*"
+  - "*CREDENTIAL*"
+  - "*ACCESS_KEY*"
+
+# Vulnerability scan findings: one finding per image whose highest severity
+# is at least this level.
+vulnerability_min_severity: low

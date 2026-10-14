@@ -1,0 +1,110 @@
+# ---------------------------------------------------------------------------
+# Approved MCP servers and tools (the "tool registry").
+#
+# Enable/disable servers or individual tools here; the agent code does not
+# change. Only tools listed in `allowed_tools` are ever shown to the agent,
+# and the same list is enforced again at call time (see mcp/policy.py).
+#
+# `${VAR:-default}` placeholders are expanded from the environment / .env.
+# ---------------------------------------------------------------------------
+
+# Docker API endpoint handed to every MCP server. This MUST be the read-only
+# socket proxy (deploy/socket-proxy/compose.yml), never the raw socket.
+docker_host: "${DOCKER_AUDIT_DOCKER_HOST:-tcp://127.0.0.1:2375}"
+
+# Refuse to run if docker_host looks like a raw socket (unix:// or npipe://).
+# Set to false only if you understand that the MCP servers would then get
+# full, unfiltered Docker API access.
+require_proxy: true
+
+servers:
+  docker:
+    enabled: true
+    role: docker_inspection
+    # Launched on demand with uvx: no manual install needed. The version is
+    # pinned so a future release cannot silently change the tool surface.
+    command: uvx
+    args: ["docker-mcp-server==2.2.7"]
+    env:
+      DOCKER_MCP_SERVER_READONLY: "1"   # server unregisters non-read-only tools
+    client_session_timeout_seconds: 60
+    # Even in read-only mode this server registers ~77 tools, including
+    # secret_inspect, swarm_join_tokens, swarm_unlock_key and
+    # container_archive_get (copies files out of containers). Only the tools
+    # below are approved.
+    allowed_tools:
+      - container_list
+      - container_inspect
+      - image_list
+      - image_inspect
+      - image_history
+      - network_list
+      - network_inspect
+      - volume_list
+      - volume_inspect
+      - system_info
+      - system_version
+
+  trivy:
+    enabled: true
+    role: image_scanner
+    command: trivy
+    args: ["mcp", "--transport", "stdio"]
+    env: {}
+    # Image scans can take minutes on first run for big images.
+    client_session_timeout_seconds: 900
+    allowed_tools:
+      - scan_image
+      - findings_list
+      - findings_get
+      - trivy_version
+    # trivy-mcp is a Trivy *plugin*. If it is missing, `docker-audit setup`
+    # (and `assess`, when auto_install is true) installs this pinned version.
+    setup:
+      auto_install: true
+      check_command: ["trivy", "plugin", "list"]
+      check_contains: "mcp"
+      install_command: ["trivy", "plugin", "install", "mcp@v0.0.20"]
+
+# Per-tool argument rules enforced by mcp/policy.py.
+argument_policy:
+  scan_image:
+    # Only images present in the current inventory snapshot may be scanned.
+    restrict_targets_to_inventory: true
+    # "secret" scanning is excluded on purpose: it would return secret values.
+    allowed_scan_types: ["vuln"]
+    forced_output_format: json
+
+# Redaction of sensitive values BEFORE anything reaches the LLM, logs, or SQLite.
+redaction:
+  # Environment variables keep their NAME but lose their VALUE, except for
+  # these clearly non-sensitive names (exact match or glob pattern).
+  env_value_allowlist:
+    - PATH
+    - LANG
+    - LC_ALL
+    - LANGUAGE
+    - TZ
+    - HOME
+    - HOSTNAME
+    - TERM
+    - DEBIAN_FRONTEND
+    - NODE_ENV
+    - "*_VERSION"
+  # Any JSON key matching these (case-insensitive glob) has its value redacted.
+  sensitive_key_patterns:
+    - "*password*"
+    - "*passwd*"
+    - "*secret*"
+    - "*token*"
+    - "*api_key*"
+    - "*apikey*"
+    - "*private_key*"
+    - "*credential*"
+    - "*authorization*"
+    - "*auth_token*"
+  # Keys that match a pattern above but are known to be harmless. trivy-mcp's
+  # pagination cursor is called "next_token"; redacting it breaks paging.
+  sensitive_key_exceptions:
+    - next_token
+    - token_type

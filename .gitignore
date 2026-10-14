@@ -1,0 +1,23 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+
+# Secrets
+.env
+
+# Generated data (SQLite DBs, reports)
+data/*
+!data/.gitkeep
+outputs/*
+!outputs/.gitkeep
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

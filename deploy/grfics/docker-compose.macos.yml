@@ -1,0 +1,48 @@
+# ---------------------------------------------------------------------------
+# GRFICSv3 on macOS (Docker Desktop) - "Option B" network adaptation.
+#
+# GRFICSv3's docker-compose.yml defines b-ics-net and c-dmz-net as *macvlan*
+# networks attached to the host NIC `eth0`. Docker Desktop for Mac does not
+# support macvlan, so `docker compose up` fails there.
+#
+# This override file does NOT modify GRFICSv3. Compose merges it on top of the
+# upstream file and only replaces the two network definitions with plain
+# bridge networks that keep the SAME subnets and gateways, so every static IP
+# address in the upstream file (192.168.95.x / 192.168.90.x) still works.
+#
+# Usage (from the GRFICSv3 checkout):
+#   docker compose -f docker-compose.yml \
+#     -f /path/to/this/repo/deploy/grfics/docker-compose.macos.yml up -d
+#
+# Known differences from a native Linux deployment (also listed in the README):
+#   * bridge networks are reachable from the Docker host; macvlan networks are
+#     not. Segmentation is therefore weaker than upstream - the assessment
+#     reports the network driver as observed, so findings reflect what is
+#     actually deployed.
+#   * Docker creates a bridge gateway at x.x.x.1 on each network; GRFICS's own
+#     router container (192.168.95.200 / 192.168.90.200) is still the DNS
+#     server and the intended inter-zone route.
+#   * Apple Silicon: GRFICS publishes multi-arch images; if an image is
+#     amd64-only Docker Desktop runs it under emulation (slower).
+#
+# For a topology identical to upstream, use Option A instead: run GRFICSv3
+# unmodified inside a Linux VM (UTM, Colima/Lima, OrbStack) and point
+# this tool's socket proxy at that VM's Docker engine.
+# ---------------------------------------------------------------------------
+
+networks:
+  b-ics-net:
+    driver: bridge
+    driver_opts: !reset {}
+    ipam:
+      config:
+        - subnet: 192.168.95.0/24
+          gateway: 192.168.95.1
+
+  c-dmz-net:
+    driver: bridge
+    driver_opts: !reset {}
+    ipam:
+      config:
+        - subnet: 192.168.90.0/24
+          gateway: 192.168.90.1

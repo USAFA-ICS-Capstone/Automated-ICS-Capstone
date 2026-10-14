@@ -1,0 +1,30 @@
+# ---------------------------------------------------------------------------
+# Experiment / run defaults. CLI flags override these per run.
+# ---------------------------------------------------------------------------
+
+# The assessment objective handed to the agent (recorded with every run so
+# model comparisons use identical objectives).
+objective: >-
+  Assess the security posture of the Docker environment hosting a
+  containerized industrial control system (ICS) lab. Identify container
+  misconfigurations, risky network exposure, missing resource limits, and
+  known image vulnerabilities. Prioritise risks by their impact on an OT
+  environment and give concrete, evidence-based remediation for defenders.
+
+# Model profile used when --model is not given (see config/models.yaml).
+default_model: local-qwen
+
+scan:
+  enabled: true
+  # used = only images referenced by containers; all = every local image.
+  scope: used
+  # Stop after this many images (0 = no limit). Large ICS images can take a
+  # few minutes each on the first scan.
+  max_images: 0
+  severities: [CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN]
+  # Page size when pulling findings out of trivy-mcp.
+  page_size: 500
+
+# Paths are relative to the project root.
+data_dir: data
+output_dir: outputs

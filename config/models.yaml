@@ -1,0 +1,90 @@
+# ---------------------------------------------------------------------------
+# Model profiles.
+#
+# Each key is a *profile name* you pass on the command line:
+#     uv run docker-audit assess --model local-qwen
+#
+# The agent code never sees the provider; the model factory
+# (src/docker_security_agent/llm/factory.py) turns a profile into an
+# OpenAI Agents SDK `Model` object. Switching models = switching profiles.
+#
+# Fields:
+#   provider           openai | ollama | vllm
+#   model              provider-specific model identifier
+#   base_url           API endpoint (Ollama/vLLM). Must be OpenAI-compatible
+#                      (end in /v1). Ollama's native API is derived from it
+#                      (the /v1 suffix is stripped) for model discovery.
+#   api_key_env        name of the env var that holds the API key (optional
+#                      for Ollama/vLLM). Keys are never written to config.
+#   temperature        sampling temperature (null = provider default)
+#   max_tokens         cap on output tokens per model call (null = default)
+#   timeout_seconds    HTTP timeout per model request
+#   max_retries        HTTP-level retries performed by the OpenAI client
+#   structured_output  native   -> ask the provider to enforce the JSON schema
+#                                  (OpenAI response_format / Ollama format)
+#                      prompted -> describe the schema in the prompt and parse
+#                                  the JSON ourselves (fallback for models
+#                                  that break with enforced schemas)
+# ---------------------------------------------------------------------------
+
+profiles:
+  openai-primary:
+    provider: openai
+    # Set OPENAI_MODEL in .env to whichever current model your account has.
+    model: "${OPENAI_MODEL:-gpt-5}"
+    api_key_env: OPENAI_API_KEY
+    temperature: null
+    timeout_seconds: 120
+    max_retries: 2
+    structured_output: native
+    description: "OpenAI frontier model via the Responses API"
+
+  local-qwen:
+    provider: ollama
+    # A variant of qwen3:14b with num_ctx=32768. Ollama's /v1 API otherwise runs
+    # every model with a 4096-token context. Create it once with:
+    #   uv run docker-audit models --provider ollama --create-variant qwen3:14b
+    model: "qwen3:14b-ctx32k"
+    base_url: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}"
+    temperature: 0.2
+    timeout_seconds: 600
+    max_retries: 1
+    structured_output: prompted
+    description: "Qwen3 14B on local Ollama (tool-capable)"
+
+  local-gpt-oss:
+    provider: ollama
+    # Create a larger-context variant first (see local-qwen), then set e.g.
+    # model: "gpt-oss:latest-ctx32k"
+    model: "gpt-oss:latest"
+    base_url: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}"
+    temperature: null
+    timeout_seconds: 600
+    max_retries: 1
+    structured_output: prompted
+    description: "gpt-oss on local Ollama (tool-capable)"
+
+  local-dolphin:
+    provider: ollama
+    model: "dolphin3:latest"
+    base_url: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}"
+    temperature: 0.2
+    timeout_seconds: 600
+    max_retries: 1
+    structured_output: prompted
+    description: >-
+      Dolphin 3 on local Ollama. NOTE: Ollama reports no 'tools' capability
+      for this model, so the capability check will refuse it for the agent loop.
+
+  local-vllm:
+    provider: vllm
+    model: "${VLLM_MODEL:-Qwen/Qwen3-14B}"
+    base_url: "${VLLM_BASE_URL:-http://localhost:8000/v1}"
+    api_key_env: VLLM_API_KEY
+    temperature: 0.2
+    timeout_seconds: 600
+    max_retries: 1
+    structured_output: prompted
+    description: >-
+      Any model served by vLLM's OpenAI-compatible server. The server must be
+      started with --enable-auto-tool-choice and a --tool-call-parser.

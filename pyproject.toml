@@ -1,0 +1,52 @@
+[project]
+name = "docker-security-agent"
+version = "0.1.0"
+description = "Defensive, read-only Docker security assessment agent for containerized ICS environments (GRFICSv3)."
+readme = "README.md"
+authors = [
+    { name = "mohamedmetwally123", email = "c27mohamed.metwally@afacademy.af.edu" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "openai-agents>=0.23.1",
+    "pydantic>=2.14.0",
+    "python-dotenv>=1.2.4",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "typer>=0.27.3",
+]
+
+[project.scripts]
+# `uv run docker-audit ...` resolves to the Typer application in cli.py.
+docker-audit = "docker_security_agent.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: talks to local subprocesses (fake MCP server) but no Docker or LLM",
+    "e2e: requires Docker Desktop + the read-only socket proxy (+ trivy for scans)",
+    "llm: requires a live LLM endpoint (Ollama / vLLM / OpenAI)",
+]
+# e2e and llm tests are opt-in: `uv run pytest -m e2e` / `-m llm`.
+addopts = "-m 'not e2e and not llm'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
