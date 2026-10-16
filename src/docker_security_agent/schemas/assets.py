@@ -138,6 +138,7 @@ class VolumeAsset(BaseModel):
     mountpoint: str = ""
     scope: str = ""
     labels: dict[str, str] = Field(default_factory=dict)
+    created: str = ""  # CreatedAt; shows whether a range reset recreated the volume
 
 
 class InventorySnapshot(BaseModel):
@@ -175,6 +176,7 @@ class InventorySnapshot(BaseModel):
                 "containers": {"__all__": {"raw", "created"}},
                 "images": {"__all__": {"raw"}},
                 "networks": {"__all__": {"raw"}},
+                "volumes": {"__all__": {"created"}},
             },
         )
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

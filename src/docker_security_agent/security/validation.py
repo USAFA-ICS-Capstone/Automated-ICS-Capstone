@@ -11,7 +11,7 @@ report must only contain evidence-grounded statements, so the agent's
     - name a resource that exists in the inventory snapshot,
     - cite at least one verifiable evidence reference (a finding ID, a CVE
       from the scanner output, a resource name, or a docker-inspect field
-      path), and
+      path that is present in the named resource's stored inspect data), and
     - not mention any CVE that Trivy did not report.
   Concerns that fail are kept in the report under "rejected agent claims"
   (transparency for model comparison) but never treated as findings.
@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from docker_security_agent.schemas.assets import InventorySnapshot
 from docker_security_agent.schemas.findings import (
@@ -43,10 +44,7 @@ from docker_security_agent.schemas.reports import AgentAssessment, PrioritizedIt
 from docker_security_agent.security.findings import finding_id
 
 VULN_ID_RE = re.compile(r"\b(CVE-\d{4}-\d{4,}|GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})\b", re.I)
-# Field paths that look like real docker inspect locations.
-INSPECT_PATH_RE = re.compile(
-    r"^(HostConfig|Config|NetworkSettings|Mounts|State|RepoTags|RepoDigests|IPAM|Driver|Internal)\b"
-)
+_INDEX_RE = re.compile(r"\[(\d+)\]")
 
 
 @dataclass
@@ -92,6 +90,54 @@ def _rationale_mismatch(text: str, finding: Finding, snapshot: InventorySnapshot
         }
         allowed |= {c.name for c in snapshot.containers if c.image_id in image_ids}
     return [] if mentioned & allowed else sorted(mentioned)
+
+
+def _inspect_docs(snapshot: InventorySnapshot, resource_name: str) -> list[dict]:
+    """Raw (redacted) inspect documents of every asset matching ``resource_name``.
+
+    Matches the same names/IDs as ``InventorySnapshot.resource_names``.
+    Volumes have no stored inspect document, so they never match.
+    """
+    name = resource_name.strip().lstrip("/").lower()
+    docs = []
+    for c in snapshot.containers:
+        if name in {c.name.lower(), c.id.lower(), c.id[:12].lower()}:
+            docs.append(c.raw)
+    for i in snapshot.images:
+        if name in {n.lower() for n in (i.id, i.display_name, *i.tags, *i.digests)}:
+            docs.append(i.raw)
+    for n in snapshot.networks:
+        if name in {n.name.lower(), n.id.lower(), n.id[:12].lower()}:
+            docs.append(n.raw)
+    return docs
+
+
+def _path_exists(node: Any, parts: list[str]) -> bool:
+    if not parts:
+        return True
+    if isinstance(node, dict):
+        # Keys may contain dots themselves (labels such as com.docker.compose.project,
+        # network names), so try every split, longest key first.
+        for n in range(len(parts), 0, -1):
+            key = ".".join(parts[:n])
+            if key in node and _path_exists(node[key], parts[n:]):
+                return True
+        return False
+    if isinstance(node, list):
+        if parts[0].isdigit():
+            i = int(parts[0])
+            return i < len(node) and _path_exists(node[i], parts[1:])
+        # No index (e.g. Mounts.Source): the path holds if any element has it.
+        return any(_path_exists(item, parts) for item in node)
+    return False
+
+
+def inspect_path_exists(doc: dict, path: str) -> bool:
+    """True if dotted ``path`` (e.g. ``HostConfig.CapAdd``, ``Mounts[0].Source``)
+    is present in the inspect document ``doc``. Only key presence is checked,
+    not whether the value supports the claim."""
+    path = _INDEX_RE.sub(r".\1", path.strip()).lstrip(".")
+    return bool(path) and _path_exists(doc, path.split("."))
 
 
 def _category(value: str) -> Category:
@@ -161,20 +207,33 @@ def validate_agent_output(
         if unknown_cves:
             problems.append(f"cites CVEs not in scanner output: {', '.join(unknown_cves)}")
 
+        # Inspect paths must exist on the named resource itself, not just look plausible.
+        docs = _inspect_docs(snapshot, concern.resource_name)
         valid_refs = []
+        unverified_refs = []
         for ref in concern.evidence_refs:
             r = ref.strip()
             if (
                 r in known_findings
                 or r.upper() in known_vulns
                 or r.lstrip("/").lower() in resources
-                or INSPECT_PATH_RE.match(r)
+                or any(inspect_path_exists(d, r) for d in docs)
             ):
                 valid_refs.append(r)
+            else:
+                unverified_refs.append(r)
         if not valid_refs:
             problems.append("no verifiable evidence reference")
 
         strong = any(r in known_findings or r.upper() in known_vulns for r in valid_refs)
+        # A rejected concern keeps every ref (what the model claimed); an accepted
+        # one only carries the refs that checked out, the rest are noted.
+        evidence_refs = concern.evidence_refs if problems else valid_refs
+        notes_for_finding = list(problems)
+        if not problems and unverified_refs:
+            notes_for_finding.append(
+                f"unverified evidence refs ignored: {', '.join(unverified_refs)}"
+            )
         finding = Finding(
             id=finding_id("AGENT", concern.resource_name, concern.title),
             rule_id="AGENT",
@@ -190,11 +249,11 @@ def validate_agent_output(
                 Evidence(
                     source="agent", resource=concern.resource_name, path="evidence_ref", value=r
                 )
-                for r in concern.evidence_refs
+                for r in evidence_refs
             ],
             explanation=concern.explanation,
             remediation=concern.remediation,
-            validation_notes=problems,
+            validation_notes=notes_for_finding,
         )
         if problems:
             outcome.rejected.append(finding)

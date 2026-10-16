@@ -7,7 +7,8 @@ models, and re-rendered later.
 Tables
 ------
 runs          one row per assessment run: model, prompt version, MCP versions,
-              objective, snapshot used, status, errors, metrics, final report
+              objective, snapshot used, status, errors, metrics, final report,
+              and the run's immutable manifest + its hashes
 snapshots     inventory snapshots (content-addressed by snapshot_id); shared
               by every run that used the same evidence
 scans         one row per image scan (linked to the snapshot it belongs to)
@@ -27,7 +28,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -59,6 +60,11 @@ CREATE TABLE IF NOT EXISTS runs (
     model_config_json TEXT,
     prompt_version  TEXT,
     mcp_servers_json TEXT,                 -- servers, versions, approved tools
+    docker_endpoint_json TEXT,             -- endpoint used + whether the read-only proxy
+                                           -- was required and verified (live runs only)
+    manifest_sha256 TEXT,                  -- immutable run manifest (see manifest.py);
+    config_sha256   TEXT,                  -- written once, never updated
+    manifest_json   TEXT,
     snapshot_id     TEXT REFERENCES snapshots(snapshot_id),
     session_id      TEXT,
     agent_status    TEXT,      -- ok/skipped/error/timeout/max_turns/invalid_output
@@ -144,5 +150,22 @@ def connect(db_path: Path | str) -> sqlite3.Connection:
     conn.executescript(SCHEMA)
     if conn.execute("SELECT COUNT(*) FROM schema_info").fetchone()[0] == 0:
         conn.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
+    _migrate(conn)
     conn.commit()
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring a database created by an older version up to SCHEMA_VERSION."""
+    # CREATE TABLE IF NOT EXISTS does not add columns to an existing table.
+    added_run_columns = [
+        "docker_endpoint_json",  # v2
+        "manifest_sha256",  # v3
+        "config_sha256",  # v3
+        "manifest_json",  # v3
+    ]
+    run_cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    for col in added_run_columns:
+        if col not in run_cols:
+            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
+    conn.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))

@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 import grfics
 import pytest
 
+from docker_security_agent.memory.database import SCHEMA_VERSION
 from docker_security_agent.memory.repository import AssessmentRepository
 from docker_security_agent.reporting.generator import build_report, render_markdown, write_report
 from docker_security_agent.schemas.observations import ImageScanResult, ToolCallRecord
@@ -184,3 +185,27 @@ def test_markdown_has_all_sections_and_files_are_written(snapshot, settings, sca
     # No secret values anywhere in the outputs.
     for secret in ("Sup3rS3cret!", "some-long-secret-you-generate", "hunter2"):
         assert secret not in json_path.read_text() and secret not in md
+
+
+def test_old_database_is_migrated(tmp_path):
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """CREATE TABLE schema_info (version INTEGER NOT NULL);
+        INSERT INTO schema_info VALUES (1);
+        CREATE TABLE runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL,
+            finished_at TEXT, status TEXT NOT NULL, mode TEXT NOT NULL,
+            objective TEXT NOT NULL, model_profile TEXT, model_provider TEXT,
+            model_id TEXT, model_config_json TEXT, prompt_version TEXT,
+            mcp_servers_json TEXT, snapshot_id TEXT, session_id TEXT,
+            agent_status TEXT, errors_json TEXT, metrics_json TEXT, report_json TEXT);"""
+    )
+    conn.close()
+
+    repo = AssessmentRepository(db)
+    cols = {r["name"] for r in repo.conn.execute("PRAGMA table_info(runs)")}
+    assert {"docker_endpoint_json", "manifest_sha256", "config_sha256", "manifest_json"} <= cols
+    assert repo.conn.execute("SELECT version FROM schema_info").fetchone()[0] == SCHEMA_VERSION
+    repo.close()

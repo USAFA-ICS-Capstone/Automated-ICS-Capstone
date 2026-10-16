@@ -2,6 +2,10 @@
 # Experiment / run defaults. CLI flags override these per run.
 # ---------------------------------------------------------------------------
 
+# Which environment / scenario this experiment assesses. Recorded in every
+# run manifest so results can be grouped by scenario.
+scenario_id: grficsv3-baseline
+
 # The assessment objective handed to the agent (recorded with every run so
 # model comparisons use identical objectives).
 objective: >-

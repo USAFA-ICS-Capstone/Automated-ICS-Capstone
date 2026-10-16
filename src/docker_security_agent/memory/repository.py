@@ -87,6 +87,7 @@ class AssessmentRepository:
             "snapshot_id",
             "agent_status",
             "mcp_servers_json",
+            "docker_endpoint_json",
             "errors_json",
             "metrics_json",
             "report_json",
@@ -99,6 +100,25 @@ class AssessmentRepository:
             values.append(_dumps(value) if isinstance(value, dict | list) else value)
         self.conn.execute(f"UPDATE runs SET {', '.join(cols)} WHERE run_id = ?", (*values, run_id))
         self.conn.commit()
+
+    def save_manifest(
+        self, run_id: str, manifest_json: str, manifest_sha256: str, config_sha256: str
+    ) -> None:
+        """Attach the run manifest. Write-once: a second call raises ValueError."""
+        cur = self.conn.execute(
+            """UPDATE runs SET manifest_json = ?, manifest_sha256 = ?, config_sha256 = ?
+               WHERE run_id = ? AND manifest_sha256 IS NULL""",
+            (manifest_json, manifest_sha256, config_sha256, run_id),
+        )
+        if cur.rowcount != 1:
+            raise ValueError(f"run {run_id} does not exist or already has a manifest")
+        self.conn.commit()
+
+    def load_manifest_json(self, run_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT manifest_json FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        return row["manifest_json"] if row else None
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         row = self.conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
@@ -207,18 +227,38 @@ class AssessmentRepository:
         assert scan_id is not None
         return scan_id
 
-    def load_scans_for_snapshot(self, snapshot_id: str) -> list[ImageScanResult]:
-        """Latest successful scan of each image for this snapshot (for replay runs)."""
+    def latest_scan_ids_for_snapshot(self, snapshot_id: str) -> list[int]:
+        """IDs of the latest successful scan of each image for this snapshot.
+
+        Snapshots are content-addressed, so several live runs can share one and
+        each adds its own scans: "latest" changes over time. Runs record the IDs
+        they used in their manifest so a re-run loads exactly the same scans.
+        """
         rows = self.conn.execute(
-            """SELECT * FROM scans WHERE snapshot_id = ? AND status = 'ok'
-               ORDER BY scanned_at DESC""",
+            """SELECT scan_id, image_id FROM scans WHERE snapshot_id = ? AND status = 'ok'
+               ORDER BY scanned_at DESC, scan_id DESC""",
             (snapshot_id,),
         ).fetchall()
-        latest: dict[str, sqlite3.Row] = {}
+        latest: dict[str, int] = {}
         for r in rows:
-            latest.setdefault(r["image_id"], r)
+            latest.setdefault(r["image_id"], r["scan_id"])
+        return sorted(latest.values())
+
+    def load_scans_for_snapshot(self, snapshot_id: str) -> list[ImageScanResult]:
+        """Latest successful scan of each image for this snapshot (for replay runs)."""
+        return self.load_scans(self.latest_scan_ids_for_snapshot(snapshot_id))
+
+    def load_scans(self, scan_ids: list[int]) -> list[ImageScanResult]:
+        """Exactly these scans (any status). Raises KeyError if one is missing."""
+        rows = [
+            self.conn.execute("SELECT * FROM scans WHERE scan_id = ?", (i,)).fetchone()
+            for i in scan_ids
+        ]
+        missing = [i for i, r in zip(scan_ids, rows, strict=True) if r is None]
+        if missing:
+            raise KeyError(f"scan(s) not found: {missing}")
         results = []
-        for r in latest.values():
+        for r in rows:
             vrows = self.conn.execute(
                 "SELECT * FROM vulnerabilities WHERE scan_id = ?", (r["scan_id"],)
             ).fetchall()

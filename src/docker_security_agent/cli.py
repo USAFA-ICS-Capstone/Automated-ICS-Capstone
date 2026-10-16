@@ -27,6 +27,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.table import Table
 
 from docker_security_agent.config import ConfigError, Settings, load_settings
@@ -38,6 +39,12 @@ app = typer.Typer(
 )
 mcp_app = typer.Typer(help="Inspect the approved MCP servers and tools.", no_args_is_help=True)
 app.add_typer(mcp_app, name="mcp")
+range_app = typer.Typer(
+    help="Named range baselines: record and verify (read-only). The reset itself is "
+    "deploy/grfics/range.sh.",
+    no_args_is_help=True,
+)
+app.add_typer(range_app, name="range")
 
 console = Console()
 
@@ -281,6 +288,27 @@ def _guarded_servers(settings: Settings, roles=None):
     ), recorder
 
 
+def _collect_snapshot(settings: Settings):
+    """Read-only inventory via the proxy + Docker MCP server. Returns (snapshot, recorder)."""
+    from docker_security_agent.inventory.collector import collect_snapshot
+    from docker_security_agent.mcp.registry import check_docker_endpoint, connect
+
+    ep = check_docker_endpoint(settings)
+    if not ep.ok:
+        console.print("[red]" + "\n".join(ep.problems) + "[/red]")
+        raise typer.Exit(1)
+    servers, recorder = _guarded_servers(settings, roles={"docker_inspection"})
+
+    async def _run():
+        async with connect(servers) as manager:
+            if not manager.active_servers:
+                raise RuntimeError(f"Docker MCP server failed: {list(manager.errors.values())}")
+            return await collect_snapshot(manager.active_servers[0])
+
+    with console.status("Collecting inventory via MCP..."):
+        return asyncio.run(_run()), recorder
+
+
 @mcp_app.command("check")
 def mcp_check() -> None:
     """Start each MCP server, list its tools and compare them with the allow-list."""
@@ -374,25 +402,10 @@ def inventory(
     save: Annotated[bool, typer.Option(help="Store the snapshot in SQLite")] = True,
 ) -> None:
     """Collect a read-only Docker inventory snapshot and print it."""
-    from docker_security_agent.inventory.collector import collect_snapshot
-    from docker_security_agent.mcp.registry import check_docker_endpoint, connect
     from docker_security_agent.memory.repository import AssessmentRepository
 
     settings = _settings()
-    ep = check_docker_endpoint(settings)
-    if not ep.ok:
-        console.print("[red]" + "\n".join(ep.problems) + "[/red]")
-        raise typer.Exit(1)
-    servers, recorder = _guarded_servers(settings, roles={"docker_inspection"})
-
-    async def _run():
-        async with connect(servers) as manager:
-            if not manager.active_servers:
-                raise RuntimeError(f"Docker MCP server failed: {list(manager.errors.values())}")
-            return await collect_snapshot(manager.active_servers[0])
-
-    with console.status("Collecting inventory via MCP..."):
-        snap = asyncio.run(_run())
+    snap, recorder = _collect_snapshot(settings)
     if save:
         repo = AssessmentRepository(settings.assessment_db_path)
         repo.save_snapshot(snap)
@@ -453,6 +466,12 @@ def inventory(
 # ---------------------------------------------------------------------------
 
 
+def _security_warning(message: str) -> None:
+    console.print(
+        Panel(message, title="SECURITY WARNING", border_style="bold red", style="bold red")
+    )
+
+
 @app.command()
 def assess(
     model: Annotated[str | None, typer.Option(help="Model profile from config/models.yaml")] = None,
@@ -462,22 +481,55 @@ def assess(
     session: Annotated[str | None, typer.Option(help="Continue a named agent session")] = None,
     objective: Annotated[str | None, typer.Option(help="Override the objective")] = None,
     skip_model_check: Annotated[bool, typer.Option(help="Skip capability preflight")] = False,
+    manifest: Annotated[
+        str | None,
+        typer.Option(
+            help="Re-run a manifest (file path or run ID) on its pinned evidence. "
+            "Cannot be combined with --model/--snapshot/--no-agent/--session/--objective."
+        ),
+    ] = None,
+    allow_drift: Annotated[
+        bool, typer.Option(help="With --manifest: run even if the prompt or schemas changed")
+    ] = False,
+    range_baseline: Annotated[
+        str | None,
+        typer.Option(
+            help="Live runs: abort unless the range matches this named baseline "
+            "(see `docker-audit range`)"
+        ),
+    ] = None,
 ) -> None:
     """Run a full defensive assessment and write outputs/<RUN_ID>/report.{json,md}."""
-    from docker_security_agent.pipeline import AssessmentAborted, AssessOptions, run_assessment
+    from docker_security_agent.pipeline import (
+        AssessmentAborted,
+        AssessOptions,
+        options_from_manifest,
+        run_assessment,
+    )
 
     settings = _settings()
-    opts = AssessOptions(
-        model_profile=model,
-        snapshot_id=snapshot,
-        use_agent=not no_agent,
-        scan=False if no_scan else None,
-        session_name=session,
-        objective=objective,
-        skip_model_check=skip_model_check,
-        progress=lambda msg: console.print(f"[dim]•[/dim] {msg}"),
-    )
     try:
+        if manifest:
+            if any([model, snapshot, no_agent, session, objective, range_baseline]):
+                raise ConfigError(
+                    "--manifest fixes the whole configuration; drop "
+                    "--model/--snapshot/--no-agent/--session/--objective/--range-baseline"
+                )
+            settings, opts = options_from_manifest(settings, manifest, allow_drift=allow_drift)
+            opts.skip_model_check = skip_model_check
+        else:
+            opts = AssessOptions(
+                model_profile=model,
+                snapshot_id=snapshot,
+                use_agent=not no_agent,
+                scan=False if no_scan else None,
+                session_name=session,
+                objective=objective,
+                skip_model_check=skip_model_check,
+                range_baseline=range_baseline,
+            )
+        opts.progress = lambda msg: console.print(f"[dim]•[/dim] {msg}")
+        opts.warn = _security_warning
         result = asyncio.run(run_assessment(settings, opts))
     except (ConfigError, AssessmentAborted) as exc:
         console.print(f"[red]Assessment not started/aborted:[/red] {exc}")
@@ -495,10 +547,112 @@ def assess(
         f"agent claims: {len(result.report.rejected_agent_claims)}"
     )
     console.print(f"Report: {result.md_path}\n        {result.json_path}")
+    if result.manifest_path:
+        console.print(
+            f"Manifest: {result.manifest_path}\n          sha256 {result.report.manifest_sha256}"
+            f"\n          config {result.report.config_sha256}"
+        )
+    endpoint = result.report.docker_endpoint
+    if endpoint and endpoint.unenforced_warning:
+        _security_warning(endpoint.unenforced_warning)
     if result.report.errors:
         console.print("[yellow]Notes:[/yellow]")
         for e in result.report.errors[:10]:
             console.print(f"  - {e[:300]}")
+
+
+# ---------------------------------------------------------------------------
+# range baselines
+# ---------------------------------------------------------------------------
+
+
+@range_app.command("record")
+def range_record(name: Annotated[str, typer.Argument(help="New baseline name")]) -> None:
+    """Fingerprint the current (read-only) inventory as named baseline NAME."""
+    from docker_security_agent.inventory.baseline import record_baseline
+    from docker_security_agent.memory.repository import AssessmentRepository
+
+    settings = _settings()
+    snap, _ = _collect_snapshot(settings)
+    try:
+        baseline = record_baseline(settings.data_dir, name, snap)
+    except ValueError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    repo = AssessmentRepository(settings.assessment_db_path)
+    repo.save_snapshot(snap)
+    repo.close()
+    console.print(
+        f"Recorded baseline [bold]{name}[/bold]: {len(snap.containers)} containers, "
+        f"{len(snap.volumes)} volumes · fingerprint {baseline.fingerprint_sha256[:12]} · "
+        f"snapshot {snap.snapshot_id}"
+    )
+
+
+@range_app.command("verify")
+def range_verify(
+    name: Annotated[str, typer.Argument(help="Baseline name")],
+    since: Annotated[
+        str | None,
+        typer.Option(help="ISO time the reset started: every container and volume must be newer"),
+    ] = None,
+) -> None:
+    """Check that the live range matches baseline NAME (exit code 1 if not)."""
+    from datetime import UTC, datetime
+
+    from docker_security_agent.inventory.baseline import load_baseline, save_verification, verify
+
+    settings = _settings()
+    try:
+        baseline = load_baseline(settings.data_dir, name)
+        since_dt = datetime.fromisoformat(since) if since else None
+    except (FileNotFoundError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(1) from exc
+    if since_dt is not None and since_dt.tzinfo is None:
+        since_dt = since_dt.replace(tzinfo=UTC)
+    snap, _ = _collect_snapshot(settings)
+    result = verify(baseline, snap, since=since_dt)
+    path = save_verification(settings.data_dir, result)
+    if result.matches:
+        console.print(
+            f"[green]Range matches baseline {name}[/green] (snapshot {snap.snapshot_id}"
+            + (", all containers and volumes recreated by the reset" if since_dt else "")
+            + f") · {path}"
+        )
+        return
+    console.print(f"[red]Range does NOT match baseline {name}:[/red]")
+    for d in result.differences:
+        console.print(f"  - {d}")
+    console.print(f"Recorded: {path}")
+    raise typer.Exit(1)
+
+
+@range_app.command("list")
+def range_list() -> None:
+    """List recorded range baselines and their latest verified reset."""
+    from docker_security_agent.inventory.baseline import (
+        latest_reset,
+        list_baselines,
+        load_baseline,
+    )
+
+    settings = _settings()
+    t = Table(title="Range baselines")
+    for col in ("Name", "Recorded", "Containers", "Fingerprint", "Last reset", "Matched"):
+        t.add_column(col)
+    for name in list_baselines(settings.data_dir):
+        b = load_baseline(settings.data_dir, name)
+        last = latest_reset(settings.data_dir, name)
+        t.add_row(
+            name,
+            f"{b.recorded_at:%Y-%m-%d %H:%M}",
+            str(len(b.fingerprint["containers"])),
+            b.fingerprint_sha256[:12],
+            f"{last.since:%Y-%m-%d %H:%M}" if last and last.since else "-",
+            ("yes" if last.matches else "[red]no[/red]") if last else "-",
+        )
+    console.print(t)
 
 
 # ---------------------------------------------------------------------------

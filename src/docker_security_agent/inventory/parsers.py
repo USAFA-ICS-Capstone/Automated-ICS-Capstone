@@ -175,4 +175,5 @@ def parse_volume(doc: dict[str, Any]) -> VolumeAsset:
         mountpoint=doc.get("Mountpoint", "") or "",
         scope=doc.get("Scope", "") or "",
         labels=doc.get("Labels") or {},
+        created=doc.get("CreatedAt", "") or "",
     )

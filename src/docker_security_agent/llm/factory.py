@@ -27,6 +27,7 @@ from docker_security_agent.config import ConfigError, ModelProfile
 
 
 @dataclass
+# That bundle gets passed into build agent()
 class ModelBundle:
     """Everything the agent needs to use a model."""
 
@@ -42,6 +43,18 @@ def _model_settings(profile: ModelProfile) -> ModelSettings:
     if profile.max_tokens is not None:
         kwargs["max_tokens"] = profile.max_tokens
     return ModelSettings(**kwargs)
+
+
+"""
+Step 1: Determine which provider you're using: if profile.provider == "openai":
+AsyncOpenAI is an API client, not an LLM.
+It knows how to send HTTP requests to a model server. 
+By changing base_url, the same client library can communicate with different compatible servers.
+Provider	Example endpoint	SDK model adapter
+OpenAI	https://api.openai.com/v1	OpenAIResponsesModel
+Ollama	http://localhost:11434/v1	OpenAIChatCompletionsModel
+vLLM	http://localhost:8000/v1	OpenAIChatCompletionsModel
+"""
 
 
 def build_model(profile: ModelProfile) -> ModelBundle:

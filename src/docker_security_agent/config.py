@@ -217,6 +217,8 @@ class ScanConfig(BaseModel):
 
 
 class ExperimentConfig(BaseModel):
+    # Names the environment/scenario being assessed; recorded in run manifests.
+    scenario_id: str = "unspecified"
     objective: str
     default_model: str
     scan: ScanConfig = Field(default_factory=ScanConfig)

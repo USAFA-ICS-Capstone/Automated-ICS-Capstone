@@ -5,11 +5,11 @@ from datetime import UTC, datetime
 import grfics
 import pytest
 
-from docker_security_agent.schemas.findings import FindingStatus
+from docker_security_agent.schemas.findings import Confidence, FindingStatus
 from docker_security_agent.schemas.observations import ImageScanResult
 from docker_security_agent.schemas.reports import AgentAssessment, PotentialConcern, PrioritizedItem
 from docker_security_agent.security import rules
-from docker_security_agent.security.validation import validate_agent_output
+from docker_security_agent.security.validation import inspect_path_exists, validate_agent_output
 from docker_security_agent.security.vulnerability_parser import parse_findings_page
 
 
@@ -141,3 +141,89 @@ def test_rationale_naming_a_different_container_is_flagged(snapshot, evidence):
     assert len(flagged) == 1 and "router" in flagged[0] and socket.id in flagged[0]
     # flagged items are kept (the finding itself is real), only annotated
     assert [p.finding_id for p in out.prioritized] == [socket.id, plc_image.id]
+
+
+def _concern(resource_name, *refs, title="Concern"):
+    return PotentialConcern(
+        title=title,
+        resource_name=resource_name,
+        category="other",
+        severity="medium",
+        explanation="x",
+        remediation="y",
+        evidence_refs=list(refs),
+    )
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "HostConfig.ThisFieldDoesNotExist",  # right section prefix, invented field
+        "Config.Totally.Made.Up",
+        "RepoTags",  # real image field, but plc is a container
+    ],
+)
+def test_inspect_path_must_exist_on_the_named_resource(snapshot, evidence, ref):
+    findings, scans = evidence
+    out = validate_agent_output(
+        _assessment(potential_concerns=[_concern("plc", ref)]), findings, snapshot, scans
+    )
+    assert out.concerns == []
+    assert out.rejected[0].status == FindingStatus.REJECTED
+    assert "no verifiable evidence reference" in out.rejected[0].validation_notes
+
+
+@pytest.mark.parametrize(
+    ("resource", "ref"),
+    [
+        ("plc", "HostConfig.PortBindings"),
+        ("/plc", "Config.Labels.com.docker.compose.service"),  # dotted key
+        ("plc", "Mounts[0].Source"),
+        ("fortiphyd/grfics-plc:latest", "RepoTags"),
+        ("b-ics-net", "IPAM"),
+    ],
+)
+def test_existing_inspect_path_is_accepted(snapshot, evidence, resource, ref):
+    findings, scans = evidence
+    out = validate_agent_output(
+        _assessment(potential_concerns=[_concern(resource, ref)]), findings, snapshot, scans
+    )
+    assert [c.status for c in out.concerns] == [FindingStatus.POTENTIAL]
+    assert out.concerns[0].confidence == Confidence.LOW  # an inspect path is weak evidence
+    assert out.rejected == []
+
+
+def test_unverified_refs_are_dropped_from_an_accepted_concern(snapshot, evidence):
+    findings, scans = evidence
+    socket = next(f for f in findings if f.rule_id == "C008")  # resource: simulation
+    out = validate_agent_output(
+        _assessment(
+            potential_concerns=[_concern("simulation", socket.id, "HostConfig.NotARealField")]
+        ),
+        findings,
+        snapshot,
+        scans,
+    )
+    [concern] = out.concerns
+    assert [e.value for e in concern.evidence] == [socket.id]
+    assert concern.validation_notes == [
+        "unverified evidence refs ignored: HostConfig.NotARealField"
+    ]
+
+
+def test_inspect_path_exists():
+    doc = {
+        "HostConfig": {"CapAdd": None, "Binds": ["/a:/b"]},
+        "Config": {"Labels": {"com.docker.compose.project": "grfics"}},
+        "Mounts": [{"Source": "/a"}, {"Source": "/b", "RW": True}],
+    }
+    assert inspect_path_exists(doc, "HostConfig.CapAdd")  # present even when null
+    assert inspect_path_exists(doc, "Config.Labels.com.docker.compose.project")
+    assert inspect_path_exists(doc, "Mounts.1.RW")
+    assert inspect_path_exists(doc, "Mounts[1].RW")
+    assert inspect_path_exists(doc, ".Mounts.RW")  # unindexed: any element
+    assert not inspect_path_exists(doc, "Mounts[0].RW")
+    assert not inspect_path_exists(doc, "Mounts[5]")
+    assert not inspect_path_exists(doc, "HostConfig.CapAdd.NET_ADMIN")  # cannot descend into null
+    assert not inspect_path_exists(doc, "HostConfig.Privileged")
+    assert not inspect_path_exists(doc, "")

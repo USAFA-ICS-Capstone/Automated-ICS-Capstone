@@ -85,6 +85,31 @@ class MCPServerInfo(BaseModel):
     error: str | None = None
 
 
+class DockerEndpointInfo(BaseModel):
+    """Which Docker API endpoint a live run used, and whether it was the read-only proxy."""
+
+    docker_host: str
+    require_proxy: bool  # config setting; False = the proxy requirement was disabled
+    proxy_verified: bool  # the endpoint refused GET /secrets with 403 (read-only proxy)
+    docker_version: str = ""
+
+    @property
+    def unenforced_warning(self) -> str | None:
+        """Text for the run's security warning, or None when the proxy was enforced."""
+        if self.require_proxy:
+            return None
+        detected = (
+            "the read-only proxy was nevertheless detected"
+            if self.proxy_verified
+            else "the endpoint was NOT verified as the read-only proxy, so the MCP servers "
+            "may have had full, unfiltered Docker API access"
+        )
+        return (
+            f"SECURITY: require_proxy is disabled for this run. Docker endpoint "
+            f"'{self.docker_host}': {detected}."
+        )
+
+
 class ContainerRow(BaseModel):
     name: str
     image: str
@@ -177,6 +202,9 @@ class Report(BaseModel):
     model: ModelInfo | None
     prompt_version: str
     mcp_servers: list[MCPServerInfo]
+    docker_endpoint: DockerEndpointInfo | None = None  # None in replay mode (no Docker access)
+    manifest_sha256: str | None = None  # outputs/<run_id>/manifest.json (see manifest.py)
+    config_sha256: str | None = None  # same value = same experimental configuration
     snapshot_id: str
     snapshot_captured_at: datetime
     docker_version: str

@@ -20,14 +20,14 @@ from docker_security_agent.agents.security_assessment import (
     build_evidence_tools,
     run_agent,
 )
-from docker_security_agent.config import ModelProfile
+from docker_security_agent.config import ConfigError, ModelProfile
 from docker_security_agent.llm.factory import ModelBundle
 from docker_security_agent.mcp.policy import ToolPolicy
 from docker_security_agent.mcp.recorder import ToolCallRecorder
 from docker_security_agent.mcp.redaction import Redactor
 from docker_security_agent.mcp.registry import DockerEndpointStatus, build_servers, connect
 from docker_security_agent.memory.repository import AssessmentRepository
-from docker_security_agent.pipeline import AssessOptions, run_assessment
+from docker_security_agent.pipeline import AssessOptions, options_from_manifest, run_assessment
 from docker_security_agent.security import rules
 
 pytestmark = pytest.mark.integration
@@ -40,6 +40,7 @@ def _bundle(model) -> ModelBundle:
         model="scripted",
         base_url="http://unused/v1",
         structured_output="prompted",
+        temperature=0.2,
     )
     return ModelBundle(model=model, settings=ModelSettings(), profile=profile)
 
@@ -268,6 +269,94 @@ async def test_replay_reuses_stored_evidence_without_docker(pipeline_env, monkey
     assert {f.id for f in replay.report.findings} == {f.id for f in first.report.findings}
     # Only fake IDs were prioritised -> deterministic fallback ordering.
     assert replay.report.prioritized[0].ranked_by == "deterministic"
+    assert replay.report.docker_endpoint is None  # replay never touches Docker
+
+
+def _raw_socket_endpoint(monkeypatch, settings):
+    """Simulate require_proxy: false with docker_host pointing at the raw socket."""
+    import docker_security_agent.pipeline as pipeline
+
+    settings.mcp.require_proxy = False
+    settings.mcp.docker_host = "unix:///var/run/docker.sock"
+    monkeypatch.setattr(
+        pipeline,
+        "check_docker_endpoint",
+        lambda s: DockerEndpointStatus(docker_host=s.mcp.docker_host, is_tcp=False),
+    )
+
+
+async def test_proxy_requirement_disabled_is_recorded_and_warned(pipeline_env, monkeypatch):
+    settings, _ = pipeline_env
+    _raw_socket_endpoint(monkeypatch, settings)
+    warnings: list[str] = []
+    progress: list[str] = []
+
+    result = await run_assessment(
+        settings,
+        AssessOptions(use_agent=False, scan=False, warn=warnings.append, progress=progress.append),
+    )
+
+    # prominent warning, and no false "read-only proxy" claim
+    assert len(warnings) == 1 and "require_proxy is disabled" in warnings[0]
+    assert "unix:///var/run/docker.sock" in warnings[0]
+    assert not any("read-only proxy" in m for m in progress)
+
+    # report.json + report.md
+    ep = result.report.docker_endpoint
+    assert ep.require_proxy is False and ep.proxy_verified is False
+    assert ep.docker_host == "unix:///var/run/docker.sock"
+    assert warnings[0] in result.report.errors
+    md = result.md_path.read_text()
+    assert "[!CAUTION]" in md and "require_proxy is disabled" in md
+    assert "NOT verified as read-only proxy" in md
+
+    # run provenance in SQLite
+    repo = AssessmentRepository(settings.assessment_db_path)
+    run = repo.get_run(result.run_id)
+    assert json.loads(run["docker_endpoint_json"]) == {
+        "docker_host": "unix:///var/run/docker.sock",
+        "require_proxy": False,
+        "proxy_verified": False,
+        "docker_version": "",
+    }
+    assert warnings[0] in json.loads(run["errors_json"])
+    repo.close()
+
+
+async def test_proxy_provenance_survives_a_failed_run(pipeline_env, monkeypatch):
+    import docker_security_agent.pipeline as pipeline
+
+    settings, _ = pipeline_env
+    _raw_socket_endpoint(monkeypatch, settings)
+
+    def broken(*a, **k):
+        raise RuntimeError("MCP launch failed")
+
+    monkeypatch.setattr(pipeline, "build_servers", broken)
+    with pytest.raises(RuntimeError):
+        await run_assessment(settings, AssessOptions(use_agent=False, scan=False))
+
+    repo = AssessmentRepository(settings.assessment_db_path)
+    [row] = repo.list_runs()
+    run = repo.get_run(row["run_id"])
+    assert run["status"] == "failed"
+    assert json.loads(run["docker_endpoint_json"])["require_proxy"] is False
+    repo.close()
+
+
+async def test_proxied_run_records_verified_endpoint_without_warning(pipeline_env):
+    settings, _ = pipeline_env
+    warnings: list[str] = []
+    result = await run_assessment(
+        settings, AssessOptions(use_agent=False, scan=False, warn=warnings.append)
+    )
+    assert warnings == []
+    ep = result.report.docker_endpoint
+    assert ep.require_proxy is True and ep.proxy_verified is True
+    assert "[!CAUTION]" not in result.md_path.read_text()
+    repo = AssessmentRepository(settings.assessment_db_path)
+    assert json.loads(repo.get_run(result.run_id)["docker_endpoint_json"])["proxy_verified"]
+    repo.close()
 
 
 async def test_failed_agent_still_produces_report(pipeline_env):
@@ -315,3 +404,201 @@ async def test_missing_optional_args_and_informative_tool_errors(settings):
     second_output = str(model.calls[2].input)
     assert "Tool call failed" in second_output and "container_name" in second_output
     assert [r.status for r in recorder.records] == ["ok", "error"]
+
+
+# ---------------------------------------------------------------------------
+# Run manifests
+# ---------------------------------------------------------------------------
+
+
+def _scripted_run(holder, socket_id):
+    holder["model"] = ScriptedModel(
+        [
+            [function_call("get_inventory_overview", {}, call_id="c1")],
+            [assistant_message(_final_json(socket_id))],
+        ]
+    )
+
+
+async def test_live_run_writes_immutable_manifest(pipeline_env):
+    settings, holder = pipeline_env
+    settings.experiment.scan.max_images = 2
+    snap = build_snapshot(settings)
+    _scripted_run(
+        holder, next(f.id for f in rules.evaluate(snap, settings.rules) if f.rule_id == "C008")
+    )
+
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted"))
+
+    # file: written once, read-only, self-verifying
+    path = result.manifest_path
+    assert path == result.json_path.parent / "manifest.json"
+    assert not path.stat().st_mode & 0o222
+    doc = json.loads(path.read_text())
+    m = doc["manifest"]
+    assert m["run_id"] == result.run_id
+    exp = m["experiment"]
+    assert exp["scenario_id"] == settings.experiment.scenario_id
+    assert exp["evidence"]["snapshot_id"] == result.report.snapshot_id
+    assert exp["prompt_bundle"]["version"] == "v3"
+    assert exp["schema_versions"]["db_schema_version"] >= 3
+    assert exp["models"]["assessment_agent"]["model"] == "scripted"
+    assert exp["sampling"]["assessment_agent"]["temperature"] == 0.2
+    assert exp["agent"]["max_turns"] == settings.agent.limits.max_turns
+    assert exp["logging"]["record_tool_calls"] and exp["logging"]["record_conversation"]
+    assert m["framework"]["commit"]  # git HEAD (or "unknown")
+    assert m["acquisition"]["mode"] == "live"
+    assert m["acquisition"]["docker_endpoint"]["proxy_verified"] is True
+
+    # SQLite: same hashes, and the pinned scans are exactly the ones this run saved
+    repo = AssessmentRepository(settings.assessment_db_path)
+    run = repo.get_run(result.run_id)
+    assert run["manifest_sha256"] == doc["manifest_sha256"] == result.report.manifest_sha256
+    assert run["config_sha256"] == doc["config_sha256"] == result.report.config_sha256
+    saved = [
+        r["scan_id"]
+        for r in repo.conn.execute("SELECT scan_id FROM scans WHERE run_id = ?", (result.run_id,))
+    ]
+    assert exp["evidence"]["scan_ids"] == sorted(saved) and len(saved) == 2
+    with pytest.raises(ValueError):  # write-once
+        repo.save_manifest(result.run_id, "{}", "x", "y")
+    repo.close()
+
+    # report
+    assert doc["manifest_sha256"] in result.md_path.read_text()
+
+
+async def test_rerun_from_manifest_reproduces_configuration(pipeline_env):
+    settings, holder = pipeline_env
+    settings.experiment.scan.max_images = 2
+    snap = build_snapshot(settings)
+    socket_id = next(f.id for f in rules.evaluate(snap, settings.rules) if f.rule_id == "C008")
+    _scripted_run(holder, socket_id)
+    first = await run_assessment(
+        settings, AssessOptions(model_profile="scripted", objective="Custom objective")
+    )
+    # A later live run of the same environment adds newer scans to the same snapshot.
+    later = await run_assessment(settings, AssessOptions(use_agent=False))
+    assert later.report.snapshot_id == first.report.snapshot_id
+
+    # Local config drifts after the run; the manifest must win.
+    settings.agent.limits.max_turns = 3
+    settings.rules.disabled_rules = ["C008"]
+
+    import docker_security_agent.pipeline as pipeline
+
+    def no_docker(*a, **k):
+        raise AssertionError("a manifest re-run must not start MCP servers")
+
+    pipeline_build_servers = pipeline.build_servers
+    pipeline.build_servers = no_docker
+    try:
+        new_settings, opts = options_from_manifest(settings, str(first.manifest_path))
+        _scripted_run(holder, socket_id)
+        rerun = await run_assessment(new_settings, opts)
+    finally:
+        pipeline.build_servers = pipeline_build_servers
+
+    a = json.loads(first.manifest_path.read_text())
+    b = json.loads(rerun.manifest_path.read_text())
+    assert b["config_sha256"] == a["config_sha256"]  # same experimental configuration
+    assert b["manifest_sha256"] != a["manifest_sha256"]  # but a distinct run record
+    assert b["manifest"]["experiment"]["evidence"] == a["manifest"]["experiment"]["evidence"]
+    assert b["manifest"]["replay_of"] == {
+        "run_id": first.run_id,
+        "manifest_sha256": a["manifest_sha256"],
+    }
+    assert b["manifest"]["acquisition"]["mode"] == "replay"
+    assert {f.id for f in rerun.report.findings} == {f.id for f in first.report.findings}
+
+    # also addressable by run ID
+    _, by_id = options_from_manifest(settings, first.run_id)
+    assert by_id.replay_of.manifest_sha256 == a["manifest_sha256"]
+
+
+async def test_rerun_refuses_altered_manifest_or_prompt_drift(pipeline_env, monkeypatch, tmp_path):
+    settings, _ = pipeline_env
+    first = await run_assessment(settings, AssessOptions(use_agent=False, scan=False))
+
+    # altered file
+    doc = json.loads(first.manifest_path.read_text())
+    doc["manifest"]["experiment"]["objective"] = "something else"
+    altered = tmp_path / "altered.json"
+    altered.write_text(json.dumps(doc))
+    with pytest.raises(ConfigError, match="modified after the run"):
+        options_from_manifest(settings, str(altered))
+
+    # prompt changed since the run
+    import docker_security_agent.agents.security_assessment as sa
+
+    monkeypatch.setattr(sa, "INSTRUCTIONS", sa.INSTRUCTIONS + " changed")
+    with pytest.raises(ConfigError, match="prompt bundle changed"):
+        options_from_manifest(settings, first.run_id)
+    _, opts = options_from_manifest(settings, first.run_id, allow_drift=True)
+    assert any("prompt bundle changed" in n for n in opts.notes)
+
+
+# ---------------------------------------------------------------------------
+# Range baselines
+# ---------------------------------------------------------------------------
+
+
+async def test_range_baseline_is_checked_and_recorded_in_manifest(pipeline_env):
+    from docker_security_agent.inventory.baseline import record_baseline
+
+    settings, holder = pipeline_env
+    baseline = record_baseline(settings.data_dir, "clean", build_snapshot(settings))
+
+    result = await run_assessment(
+        settings, AssessOptions(use_agent=False, scan=False, range_baseline="clean")
+    )
+    m = json.loads(result.manifest_path.read_text())["manifest"]
+    assert m["experiment"]["range_baseline"] == {
+        "name": "clean",
+        "fingerprint_sha256": baseline.fingerprint_sha256,
+        "baseline_snapshot_id": baseline.snapshot_id,
+    }
+    assert m["acquisition"]["range_check"]["verified_at"]
+
+    # a manifest re-run carries the baseline forward: same configuration
+    new_settings, opts = options_from_manifest(settings, result.run_id)
+    rerun = await run_assessment(new_settings, opts)
+    a = json.loads(result.manifest_path.read_text())
+    b = json.loads(rerun.manifest_path.read_text())
+    assert b["config_sha256"] == a["config_sha256"]
+    assert b["manifest"]["acquisition"]["range_check"] is None  # replay: nothing re-checked
+
+
+async def test_range_mismatch_aborts_before_scanning(pipeline_env):
+    from docker_security_agent.inventory.baseline import record_baseline
+    from docker_security_agent.pipeline import AssessmentAborted
+
+    settings, holder = pipeline_env
+    snap = build_snapshot(settings)
+    snap.containers = [c for c in snap.containers if c.name != "kali"]
+    record_baseline(settings.data_dir, "without-kali", snap)
+
+    with pytest.raises(AssessmentAborted, match="containers.kali: unexpected"):
+        await run_assessment(
+            settings, AssessOptions(use_agent=False, range_baseline="without-kali")
+        )
+
+    repo = AssessmentRepository(settings.assessment_db_path)
+    [row] = repo.list_runs()
+    calls = repo.load_tool_calls(row["run_id"])
+    assert row["status"] == "failed"
+    assert not any(c["tool"] == "scan_image" for c in calls)
+    assert repo.get_run(row["run_id"])["manifest_sha256"] is None
+    repo.close()
+    verifications = settings.data_dir / "range-baselines" / "without-kali" / "verifications"
+    assert len(list(verifications.glob("*.json"))) == 1  # the failed check is kept
+
+
+async def test_range_baseline_errors_early(pipeline_env):
+    settings, _ = pipeline_env
+    with pytest.raises(ConfigError, match="No range baseline named"):
+        await run_assessment(settings, AssessOptions(use_agent=False, range_baseline="nope"))
+    with pytest.raises(ConfigError, match="cannot be used to replay"):
+        await run_assessment(
+            settings, AssessOptions(use_agent=False, snapshot_id="x", range_baseline="nope")
+        )

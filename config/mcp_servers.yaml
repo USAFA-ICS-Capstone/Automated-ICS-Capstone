@@ -23,6 +23,9 @@ servers:
     role: docker_inspection
     # Launched on demand with uvx: no manual install needed. The version is
     # pinned so a future release cannot silently change the tool surface.
+
+    #This tells your application to launch a Docker MCP server using:
+    #The MCP server exposes Docker operations as tools the LLM can request.
     command: uvx
     args: ["docker-mcp-server==2.2.7"]
     env:
@@ -32,6 +35,8 @@ servers:
     # secret_inspect, swarm_join_tokens, swarm_unlock_key and
     # container_archive_get (copies files out of containers). Only the tools
     # below are approved.
+
+    # These are the tools the agent is permitted to see and call.
     allowed_tools:
       - container_list
       - container_inspect
@@ -45,6 +50,12 @@ servers:
       - system_info
       - system_version
 
+  # Trivy is a vulnerability scanner. In your project, it helps identify known vulnerabilities in Docker images.
+  # For example, your agent might:
+#1. Call image_list to discover the Docker images.
+#2. Call scan_image on an approved image.
+#3. Receive vulnerability findings.
+#4. Analyze and prioritize the results.
   trivy:
     enabled: true
     role: image_scanner

@@ -26,6 +26,7 @@ from docker_security_agent.schemas.findings import Finding, Severity
 from docker_security_agent.schemas.observations import ImageScanResult
 from docker_security_agent.schemas.reports import (
     ContainerRow,
+    DockerEndpointInfo,
     ImageRow,
     ImageVulnerabilitySummary,
     MCPServerInfo,
@@ -68,6 +69,9 @@ def build_report(
     prompt_version: str,
     mcp_servers: list[MCPServerInfo],
     snapshot: InventorySnapshot,
+    docker_endpoint: DockerEndpointInfo | None = None,
+    manifest_sha256: str | None = None,
+    config_sha256: str | None = None,
     findings: list[Finding],
     scans: list[ImageScanResult],
     validation: ValidationOutcome | None,
@@ -269,6 +273,9 @@ def build_report(
         model=model,
         prompt_version=prompt_version,
         mcp_servers=mcp_servers,
+        docker_endpoint=docker_endpoint,
+        manifest_sha256=manifest_sha256,
+        config_sha256=config_sha256,
         snapshot_id=snapshot.snapshot_id,
         snapshot_captured_at=snapshot.captured_at,
         docker_version=snapshot.docker_version,
@@ -337,6 +344,13 @@ def _finding_block(f: Finding) -> str:
     return "\n".join(lines)
 
 
+def _endpoint_line(e: DockerEndpointInfo) -> str:
+    proxy = (
+        "read-only proxy verified" if e.proxy_verified else "**NOT verified as read-only proxy**"
+    )
+    return f"`{e.docker_host}` ({proxy}; require_proxy: {str(e.require_proxy).lower()})"
+
+
 def render_markdown(r: Report) -> str:
     s = r.summary
     md: list[str] = []
@@ -352,6 +366,13 @@ def render_markdown(r: Report) -> str:
         )
     else:
         md.append(f"**Model:** none (deterministic run) · **Snapshot:** `{r.snapshot_id}`\n")
+    if r.manifest_sha256:
+        md.append(
+            f"**Manifest:** `manifest.json` · sha256 `{r.manifest_sha256}` · "
+            f"config `{r.config_sha256}`\n"
+        )
+    if r.docker_endpoint and r.docker_endpoint.unenforced_warning:
+        md.append(f"> [!CAUTION]\n> **{r.docker_endpoint.unenforced_warning}**\n")
 
     md.append("## 1. Assessment summary\n")
     md.append(f"{s.executive_summary}\n")
@@ -371,7 +392,12 @@ def render_markdown(r: Report) -> str:
     md.append("\n## 2. Docker environment overview\n")
     md.append(
         f"- Docker engine: {r.docker_version} ({r.docker_platform})\n"
-        f"- Snapshot captured: {r.snapshot_captured_at:%Y-%m-%d %H:%M:%S UTC}\n"
+        + (
+            f"- Docker API endpoint: {_endpoint_line(r.docker_endpoint)}\n"
+            if r.docker_endpoint
+            else ""
+        )
+        + f"- Snapshot captured: {r.snapshot_captured_at:%Y-%m-%d %H:%M:%S UTC}\n"
         f"- Containers: {s.containers_total} ({s.containers_running} running) · Images: "
         f"{s.images_total} · Networks: {s.networks_total} · Volumes: {s.volumes_total}\n"
         f"- Images with known vulnerabilities: {s.vulnerable_images} · Total vulnerabilities: "

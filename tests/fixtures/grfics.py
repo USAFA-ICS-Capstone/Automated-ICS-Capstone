@@ -164,6 +164,7 @@ def volume_doc(name: str) -> dict[str, Any]:
         "Mountpoint": f"/var/lib/docker/volumes/{name}/_data",
         "Scope": "local",
         "Labels": {},
+        "CreatedAt": "2026-10-01T12:00:00Z",
     }
 
 

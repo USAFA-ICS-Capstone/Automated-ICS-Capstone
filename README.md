@@ -312,6 +312,13 @@ Other controls:
   removed before results reach the model.
 - **Limits.** `max_turns` (30), `max_tool_calls` (40) and a wall-clock timeout (1200 s)
   are configurable in `config/agent.yaml`.
+- **The range reset is outside the boundary on purpose.** `deploy/grfics/range.sh` changes
+  the lab, so it uses the operator's own Docker access and is never available to the agent.
+  docker-audit only *verifies* resets, read-only through the proxy.
+- **Proxy override is never silent.** If `require_proxy: false`, every live run records the
+  endpoint used and whether the proxy was verified (`runs.docker_endpoint_json`,
+  `report.json` → `docker_endpoint`), puts a caution banner at the top of `report.md`, and
+  prints a red security warning in the CLI.
 - **Tracing is off by default.** The SDK would otherwise upload traces, including Docker
   metadata, to OpenAI even when a local model is used.
 - **Read-only verification.** The end-to-end tests compare a fingerprint of all
@@ -481,6 +488,37 @@ status), token usage, timings, validation notes and completion status. Historica
 findings are always tied to their run and snapshot and are never presented as current
 state.
 
+**Run manifests (immutable experiment configuration).** Once a run's evidence is known,
+it freezes a manifest (`src/docker_security_agent/manifest.py`) and writes it to
+`outputs/<RUN_ID>/manifest.json`. The file is created once and made read-only, and it is
+stored in the `runs` row with two hashes, both shown in the report:
+
+| Hash | Covers | Meaning |
+|---|---|---|
+| `manifest_sha256` | the whole manifest | this exact run record (tamper evidence) |
+| `config_sha256` | the `experiment` block only | the experimental configuration: equal hashes = same configuration |
+
+The `experiment` block holds the scenario (`scenario_id` in `config/experiment.yaml`),
+the objective, the range baseline the run started from (see
+[Resetting the range](#resetting-the-range-between-runs)), the pinned evidence (snapshot ID **and the exact scan IDs**), the prompt
+bundle (version + hash of the instructions), the schema versions, the model and sampling
+parameters for each role, the agent limits, the rule configuration and the logging flags.
+The rest of the manifest records the run ID and time, the framework commit (with a flag
+for uncommitted changes), and how the evidence was gathered (MCP servers, Docker
+endpoint, scan settings).
+
+Re-run a manifest on its pinned evidence (a replay, so Docker is never contacted):
+
+```bash
+uv run docker-audit assess --manifest outputs/run-XXXX/manifest.json   # or: --manifest run-XXXX
+```
+
+The re-run takes its whole configuration from the manifest, not from the local YAML, and
+its own manifest records `replay_of` plus the **same `config_sha256`**. A manifest whose
+hash does not match is refused. A changed prompt or schema is refused unless you pass
+`--allow-drift`, which records the drift in the run. A different framework commit is
+recorded as a note.
+
 ---
 
 ## 12. CLI reference
@@ -495,6 +533,10 @@ state.
 | `docker-audit mcp tools` | Exactly the tools (and descriptions) the agent sees |
 | `docker-audit inventory [--json] [--no-save]` | Read-only inventory snapshot |
 | `docker-audit assess [--model P] [--snapshot ID] [--no-agent] [--no-scan] [--session NAME] [--objective TEXT] [--skip-model-check]` | Run an assessment |
+| `docker-audit assess --manifest FILE\|RUN_ID [--allow-drift]` | Re-run a run manifest's exact configuration on its pinned evidence |
+| `docker-audit assess ... --range-baseline NAME` | Abort unless the live range matches baseline NAME; recorded in the manifest |
+| `docker-audit range record NAME` / `range verify NAME [--since ISO]` / `range list` | Record or verify a named range baseline (read-only) |
+| `deploy/grfics/range.sh save NAME` / `reset NAME` / `list` | Operator script: archive the lab as a baseline / reset the lab to it (changes the lab) |
 | `docker-audit runs [--limit N]` | List runs |
 | `docker-audit snapshots [--limit N]` | List stored snapshots |
 | `docker-audit report --run-id ID [--format md\|json\|path] [--raw]` | Show a stored report |
@@ -598,6 +640,40 @@ always describe what is really running.
 **Option A (highest fidelity): Linux VM.** Run GRFICSv3 unmodified inside UTM, Colima/Lima
 or an OrbStack Linux machine. Run the socket proxy against that VM's Docker engine and set
 `DOCKER_AUDIT_DOCKER_HOST` to it. Nothing else changes.
+
+### Resetting the range between runs
+
+Confirmatory runs must start from the same known lab state (framework §3, coding guide
+§25). [`deploy/grfics/range.sh`](deploy/grfics/range.sh) restores GRFICS to a **named
+baseline**:
+
+```bash
+# once, on a freshly deployed, healthy lab: archive volumes + record the fingerprint
+deploy/grfics/range.sh save clean-v1
+
+# before every run: recreate containers/networks, restore volumes, verify
+deploy/grfics/range.sh reset clean-v1
+uv run docker-audit assess --model local-qwen --range-baseline clean-v1
+```
+
+- `save` stops the project, archives every named volume (PLC program and state, HMI
+  database, ...) with checksums, restarts it, and runs `docker-audit range record`.
+- `reset` checks the archive checksums, runs `docker compose down --volumes`, recreates and
+  restores each volume, starts the lab from **local** images (no pull, no build), waits for
+  health checks, then runs `docker-audit range verify NAME --since <reset start>`.
+- **Verification** compares a fresh read-only inventory with the baseline's fingerprint:
+  images by content ID, privileges, mounts, ports, networks, compose labels (including the
+  config hash), volumes and container state. Container IDs, creation times and dynamic IPs
+  are ignored, because a reset always changes them. `--since` also requires every container
+  and volume to be newer than the reset, which catches a volume that was not restored.
+- `assess --range-baseline NAME` repeats the comparison before scanning and **aborts** on
+  any difference. The run manifest records the baseline (`experiment.range_baseline`) and the
+  check (`acquisition.range_check`, including the last verified reset).
+
+Baselines and archives live in `data/range-baselines/NAME/` (git-ignored) and are
+write-once. Environment variables (`GRFICS_DIR`, `GRFICS_PROJECT`, ...) are documented at
+the top of the script. Fingerprints cover the whole Docker engine, so run the lab on an
+engine dedicated to it: unrelated containers show up as differences.
 
 > GRFICSv3 itself was **not** deployed during development (it pulls several GB of images
 > and runs an attacker container). The pipeline was validated live against another
