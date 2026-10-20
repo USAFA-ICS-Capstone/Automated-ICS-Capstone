@@ -1,0 +1,28 @@
+# ---------------------------------------------------------------------------
+# EXAMPLE ONLY - not used by default (Compose never loads this file unless it
+# is passed with -f). Kept for the next phase: attaching the containerized
+# agent to existing GRFICSv3 networks without rebuilding the image.
+#
+#   docker compose -f deploy/agent/compose.yml \
+#                  -f deploy/agent/compose.grfics.example.yml run --rm agent ...
+#
+# The networks must already exist (GRFICS is started separately) and are
+# declared external, so this file never creates, changes or removes them.
+# Their names are <GRFICS compose project>_<network>, e.g. grficsv3_c-dmz-net;
+# check with `docker network ls`.
+#
+# Attaching only changes which IP networks the agent container has interfaces
+# on. It adds no tools: the agent's capabilities are still limited to the
+# approved MCP tools in config/mcp_servers.yaml.
+# ---------------------------------------------------------------------------
+services:
+  agent:
+    networks:
+      default: {}
+      docker-audit-mgmt: {}
+      grfics-dmz: {}
+
+networks:
+  grfics-dmz:
+    external: true
+    name: ${GRFICS_DMZ_NETWORK:-grficsv3_c-dmz-net}

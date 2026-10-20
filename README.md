@@ -62,7 +62,8 @@ machine (macOS 15, Apple Silicon, Docker Desktop 4.88 / Engine 29.7.2, Ollama 0.
 
 ## 2. Quick start
 
-For readers who already have Docker Desktop, uv, Trivy and Ollama:
+For readers who already have Docker Desktop, uv, Trivy and Ollama (to run the agent in a
+container instead, see [3.10](#310-alternative-run-the-agent-in-a-docker-container)):
 
 ```bash
 uv sync                                                    # install into .venv
@@ -200,6 +201,136 @@ uv run docker-audit report --run-id <RUN_ID>        # view a stored report
 See [Running GRFICSv3 on macOS](#15-running-grficsv3-on-macos). The assessment tool works
 the same way against any Docker environment. During development it was run against a
 locally running ICS range (20 containers, 38 images, 8 networks).
+
+### 3.10 (Alternative) Run the agent in a Docker container
+
+The same agent, config and pinned tools can run in a container instead of the Mac's
+Python environment. Only the packaging changes: the code, the MCP servers, the tool
+allow-list, the ToolPolicy and the proxy boundary are the ones described in this README.
+Ollama stays on the host. Prerequisites: Docker Desktop and Ollama (you do not need uv,
+Python or Trivy on the host for this path).
+
+| File | Purpose |
+|---|---|
+| [`Dockerfile`](Dockerfile) | `runtime` image: Python 3.12 + `uv.lock` dependencies, uv/uvx with `docker-mcp-server==2.2.7` pre-cached (plus the managed CPython 3.14.7 it needs), Trivy 0.75.0 + plugin `mcp@v0.0.20`. Runs as uid 10001. `test` image: + dev dependencies and tests. |
+| [`deploy/agent/compose.yml`](deploy/agent/compose.yml) | `agent` service (one-shot CLI containers) and `test` service |
+| [`deploy/agent/build.sh`](deploy/agent/build.sh) | builds both images and records the git commit for run manifests |
+| [`deploy/socket-proxy/compose.yml`](deploy/socket-proxy/compose.yml) | unchanged proxy, now also attached to the internal `docker-audit-mgmt` network |
+| [`deploy/agent/compose.grfics.example.yml`](deploy/agent/compose.grfics.example.yml) | example only, never loaded by default: how to attach the agent to GRFICS networks later |
+
+**Build, start, stop, test**
+
+```bash
+# 1. The read-only proxy (creates the internal docker-audit-mgmt network)
+docker compose -f deploy/socket-proxy/compose.yml up -d
+
+# 2. Build the images (agent + tests). build.sh = `docker compose build` plus the git
+#    commit/dirty flag for run manifests (the image has no .git).
+deploy/agent/build.sh
+
+# 3. One-time: download the Trivy DBs into the trivy-cache volume. The Java DB (for
+#    JAR files) is not part of `setup`; fetch it too, or the first scan of a Java
+#    image (e.g. Elasticsearch) can fail with "failed to scan project".
+docker compose -f deploy/agent/compose.yml run --rm agent setup
+docker compose -f deploy/agent/compose.yml run --rm --entrypoint trivy agent image --download-java-db-only
+
+# 4. Preflight (the image's default command): config, proxy, MCP servers, Trivy DB, model
+docker compose -f deploy/agent/compose.yml run --rm agent            # = doctor
+docker compose -f deploy/agent/compose.yml run --rm agent doctor --probe
+docker compose -f deploy/agent/compose.yml run --rm agent mcp check
+
+# 5. Use it exactly like the host CLI: everything after `agent` goes to docker-audit
+docker compose -f deploy/agent/compose.yml run --rm agent inventory
+docker compose -f deploy/agent/compose.yml run --rm agent assess --no-agent
+docker compose -f deploy/agent/compose.yml run --rm agent assess --model local-qwen
+docker compose -f deploy/agent/compose.yml run --rm agent runs
+
+# 6. Automated tests inside the image (no network)
+docker compose -f deploy/agent/compose.yml run --rm test
+docker compose -f deploy/agent/compose.yml run --rm test tests/unit -q   # any pytest args
+
+# Stop / clean up. Containers are removed after each run (--rm), so there is nothing
+# long-running to stop. `down` removes the project's network; add -v to also delete
+# the Trivy DB volume. Reports and SQLite live in ./data and ./outputs and are kept.
+docker compose -f deploy/agent/compose.yml down
+docker compose -f deploy/socket-proxy/compose.yml down    # only if the host workflow is not in use
+```
+
+**How the container reaches its dependencies**
+
+```text
+ Mac (host)                                   Docker Desktop VM
+ ─────────────                                ──────────────────────────────────────────────
+ Ollama 127.0.0.1:11434  ◄── host.docker.internal ──┐
+                                                    │  network: docker-audit-agent_default
+                                       ┌────────────┴─────────────┐
+ ./config  (ro) ──────────────────────►│ agent container (uid     │
+ ./data    (SQLite, baselines) ◄──────►│ 10001, cap_drop ALL)     │
+ ./outputs (reports, manifests) ◄─────►│  docker-audit (Python)   │
+ volume trivy-cache (Trivy DB) ◄──────►│   ├─ uvx docker-mcp-server   (stdio subprocess)
+                                       │   └─ trivy mcp               (stdio subprocess)
+                                       └────────────┬─────────────┘
+                                                    │  network: docker-audit-mgmt (internal)
+                                       ┌────────────┴─────────────┐
+                                       │ docker-audit-socket-proxy│── /var/run/docker.sock (ro)
+                                       │ GET/HEAD only, 403 rest  │   (only the proxy mounts it)
+                                       └──────────────────────────┘
+```
+
+- **Ollama.** `OLLAMA_BASE_URL` is set to `http://host.docker.internal:11434/v1`. Docker
+  Desktop resolves `host.docker.internal` to the Mac and forwards to its loopback, so
+  Ollama's default `127.0.0.1` listener works unchanged. The model never runs in the
+  container.
+- **Docker MCP.** `docker-mcp-server` is launched by the agent as a stdio subprocess, as
+  on the host, from the pinned copy cached in the image (uv runs offline; nothing is
+  downloaded at runtime). Its `DOCKER_HOST` is `tcp://docker-audit-socket-proxy:2375`:
+  the proxy's container name on the `docker-audit-mgmt` network. That network is
+  `internal` (no route out) and only the proxy and the agent are attached. The agent
+  container has no Docker socket. `require_proxy: true` still refuses to start if the
+  endpoint does not answer `GET /secrets` with 403.
+- **Trivy.** `trivy mcp` also runs as a stdio subprocess. Trivy pulls image contents
+  through the same proxy (`GET /images/{id}/get`), and its vulnerability DB lives in the
+  `trivy-cache` volume (filled by `setup`, kept across runs).
+- **Persistence.** `./data` and `./outputs` are bind-mounted, so the container uses the
+  same `assessments.db`, `agent_sessions.db`, range baselines, reports and manifests as
+  host runs (`docker-audit runs` lists both). `./config` is mounted read-only.
+
+**Configuration (environment variables, all optional).** Compose variables are named
+`AGENT_*` so they never collide with the host-workflow values in `.env`. `.env` itself
+is still read for API keys (`OPENAI_API_KEY`, ...).
+
+| Variable | Default | Becomes in the container |
+|---|---|---|
+| `AGENT_OLLAMA_BASE_URL` | `http://host.docker.internal:11434/v1` | `OLLAMA_BASE_URL` |
+| `AGENT_VLLM_BASE_URL` | `http://host.docker.internal:8000/v1` | `VLLM_BASE_URL` |
+| `AGENT_DOCKER_HOST` | `tcp://docker-audit-socket-proxy:2375` | `DOCKER_AUDIT_DOCKER_HOST` |
+| `AGENT_CONFIG_DIR` / `AGENT_DATA_DIR` / `AGENT_OUTPUT_DIR` | `./config` / `./data` / `./outputs` | mounted at `/app/config` (ro) / `/app/data` / `/app/outputs` |
+| `AGENT_IMAGE` / `AGENT_TEST_IMAGE` | `docker-audit-agent:latest` / `:test` | image tags |
+
+**Hardening.** Non-root user, `cap_drop: [ALL]`, `no-new-privileges`, not privileged, no
+Docker socket, `/tmp` on a `noexec` tmpfs, `pids_limit: 512`, `init` to reap MCP
+subprocesses. The root filesystem is left writable because uv must take a lock in its
+cache even when running offline; that layer is discarded after every `--rm` run. The
+agent's own containers (`docker-audit-agent-*`) are in `ignore_containers`, like the
+proxy.
+
+**Attaching to GRFICS networks later (not done now).** The image needs no change. Docker
+networks are attached to *containers*, so the next phase only adds networks to the
+`agent` service, declared `external` so Compose never creates or alters GRFICS's own
+networks:
+
+```bash
+docker network ls                       # e.g. grficsv3_c-dmz-net, grficsv3_b-ics-net
+GRFICS_DMZ_NETWORK=grficsv3_c-dmz-net \
+docker compose -f deploy/agent/compose.yml -f deploy/agent/compose.grfics.example.yml \
+  run --rm agent doctor
+```
+
+The container then gets one more interface with an address on that subnet, and Docker's
+embedded DNS resolves GRFICS containers by name on it. Its other two networks are
+unchanged: Ollama is still reached through the default network, and Docker metadata
+still only through the proxy on `docker-audit-mgmt`. Joining a network adds no tools.
+What the agent can do is still decided by the MCP allow-list and ToolPolicy.
 
 ---
 
@@ -611,6 +742,18 @@ The mocked tests use the OpenAI Agents SDK's own test double
 | `uv run pytest -m "e2e and llm"` | **1 passed** in 6 min 38 s: live agent run with `qwen3:14b-ctx32k`, agent status `ok`, read-only verified |
 | Not executed | OpenAI and vLLM live runs (no API key or vLLM server on the machine). Both are covered by unit tests with mocked HTTP and use the same SDK code path as Ollama. |
 
+**Containerized agent (2026-10-20, Docker Desktop 4.88.1 / Engine 29.7.2):**
+
+| Check | Result |
+|---|---|
+| `docker compose ... run --rm test` (unit + integration in the image, no network) | **123 passed**, 2 deselected (same as `uv run pytest` on the host) |
+| `doctor --probe` in the container | all checks OK: proxy `filtered=True`, both MCP servers, Trivy DB, `local-qwen` via `host.docker.internal` (tool-call probe OK) |
+| `mcp check` in the container | identical to the host: docker 77 registered / 11 exposed, trivy 6 / 4 |
+| ToolPolicy live in the container | `secret_inspect`, `container_archive_get` refused; `scan_image` outside the inventory refused; `secret`/`misconfig` scan types rewritten to `vuln`; proxy answered 403 to `POST /containers/plc/stop`, `/containers/create`, `/exec/x/start`, `GET /secrets` |
+| `assess --no-agent`, host vs container, same Trivy DB | all 162 rule findings identical; 19/20 image scans identical. Differences: the container run also scans its own image `docker-audit-agent:latest` (one extra V001), see Known limitations |
+| `assess --model local-qwen` in the container | completed, agent status `ok`, 412 s, 0 blocked tool calls, 0 rejected claims |
+| Persistence | runs, reports and manifests written by one container are listed by a new container and by the host (`docker-audit runs`) |
+
 ---
 
 ## 15. Running GRFICSv3 on macOS
@@ -717,6 +860,16 @@ engine dedicated to it: unrelated containers show up as differences.
   is told to treat tool output as data, and it has no write capability, so the worst case
   is a misleading report. Validation limits invented facts but not misleading wording.
 - **macOS Option B networking** differs from upstream GRFICS (see section 15).
+- **Containerized agent** (section 3.10):
+  - The agent's own container is ignored by the rules, but its image is in use while it
+    runs, so with `scan.scope: used` Trivy scans `docker-audit-agent:latest` too (one
+    extra V001 finding compared with a host run). This is the same treatment the proxy
+    image already gets. Range baselines recorded from the host do not include the agent
+    container either, so run `range verify` / `--range-baseline` from the host.
+  - `deploy/grfics/range.sh` (the reset tool) needs write access to Docker and stays on
+    the host; the e2e tests (`-m e2e`) use the host `docker` CLI and also run on the host.
+  - The root filesystem is writable (uv needs a cache lock); Trivy's Java DB is not
+    downloaded by `setup` (see 3.10 step 3).
 
 ---
 
@@ -730,6 +883,10 @@ engine dedicated to it: unrelated containers show up as differences.
 | `--skip-db-update cannot be specified on the first run` | `uv run docker-audit setup` (downloads the Trivy DB) |
 | First `mcp check` is slow | `uvx` downloads docker-mcp-server on first use (once) |
 | `VIRTUAL_ENV ... does not match` warning | Harmless; another venv is active. Run `deactivate`. |
+| Container: `network docker-audit-mgmt declared as external, but could not be found` | Start (or recreate) the proxy first: `docker compose -f deploy/socket-proxy/compose.yml up -d` |
+| Container: `Cannot reach Docker proxy at http://docker-audit-socket-proxy:2375` | The proxy was started from an older compose file without the `docker-audit-mgmt` network; run the `up -d` above again |
+| Container: model check cannot reach Ollama | `curl http://localhost:11434/api/tags` on the Mac; Ollama must be running. For a non-default address set `AGENT_OLLAMA_BASE_URL` |
+| Container: `scan <image>: Tool error: MCPError: failed to scan project` on a Java image | Trivy Java DB missing: `docker compose -f deploy/agent/compose.yml run --rm --entrypoint trivy agent image --download-java-db-only` |
 | Agent status `invalid_output` | The model's final answer was not valid JSON. Try `structured_output: native`, a stronger model, or `findings_in_prompt: true` in `config/agent.yaml`. |
 
 ---

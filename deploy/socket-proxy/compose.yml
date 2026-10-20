@@ -16,7 +16,9 @@
 #
 # How the app uses it:
 #   MCP servers are launched with DOCKER_HOST=tcp://127.0.0.1:2375 so they talk
-#   to the proxy, never to /var/run/docker.sock directly.
+#   to the proxy, never to /var/run/docker.sock directly. The containerized
+#   agent uses tcp://docker-audit-socket-proxy:2375 over the internal
+#   docker-audit-mgmt network instead (see deploy/agent/compose.yml).
 #
 # Start:  docker compose -f deploy/socket-proxy/compose.yml up -d
 # Stop:   docker compose -f deploy/socket-proxy/compose.yml down
@@ -50,6 +52,9 @@ services:
     ports:
       # Bind to loopback only so nothing on the LAN can reach the Docker API.
       - "127.0.0.1:2375:2375"
+    networks:
+      - default          # keeps the 127.0.0.1:2375 port for the host workflow
+      - docker-audit-mgmt
     read_only: true
     tmpfs:
       - /run
@@ -58,3 +63,12 @@ services:
       - no-new-privileges:true
     labels:
       com.docker-audit.role: "read-only-docker-api-proxy"
+
+networks:
+  # Private network between this proxy and the containerized agent
+  # (deploy/agent/compose.yml), which reaches the proxy as
+  # tcp://docker-audit-socket-proxy:2375. internal: no route off the network,
+  # and nothing else is attached to it.
+  docker-audit-mgmt:
+    name: docker-audit-mgmt
+    internal: true

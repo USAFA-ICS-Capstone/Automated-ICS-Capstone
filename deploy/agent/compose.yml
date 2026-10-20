@@ -1,0 +1,109 @@
+# ---------------------------------------------------------------------------
+# Containerized Docker Security Assessment Agent (docker-audit).
+#
+# The agent is a CLI, so it runs as one-shot containers:
+#
+#   docker compose -f deploy/socket-proxy/compose.yml up -d     # proxy first
+#   deploy/agent/build.sh                  # = compose build, + git provenance
+#   docker compose -f deploy/agent/compose.yml run --rm agent setup      # once: Trivy DB
+#   docker compose -f deploy/agent/compose.yml run --rm agent doctor     # preflight
+#   docker compose -f deploy/agent/compose.yml run --rm agent assess --model local-qwen
+#   docker compose -f deploy/agent/compose.yml run --rm test             # pytest in Docker
+#
+# Anything after `agent` is passed to `docker-audit` (ENTRYPOINT). With no
+# arguments the container runs `docker-audit doctor`.
+#
+# How the container reaches its dependencies:
+#   Ollama  -> host.docker.internal:11434 (Ollama stays on the Mac)
+#   Docker  -> tcp://docker-audit-socket-proxy:2375 over the internal
+#              docker-audit-mgmt network (the read-only proxy; no socket here)
+#   MCP     -> docker-mcp-server and trivy-mcp run as stdio subprocesses
+#              INSIDE this container, exactly as on the host
+#
+# Every host-specific value is an environment variable with a default; set
+# them in your shell or pass `--env-file`. They are named AGENT_* so they never
+# collide with the host-workflow values in the repository's .env.
+#
+# GRFICS networks are NOT joined here. See compose.grfics.example.yml.
+# ---------------------------------------------------------------------------
+name: docker-audit-agent
+
+x-agent: &agent
+  image: ${AGENT_IMAGE:-docker-audit-agent:latest}
+  build:
+    context: ../..
+    dockerfile: Dockerfile
+    target: runtime
+    args: &build-args
+      # git provenance for run manifests (set by deploy/agent/build.sh)
+      BUILD_COMMIT: ${AGENT_BUILD_COMMIT:-}
+      BUILD_DIRTY: ${AGENT_BUILD_DIRTY:-}
+  # API keys etc. (OPENAI_API_KEY, VLLM_API_KEY, OPENAI_MODEL) come from the
+  # same git-ignored .env the host workflow uses, if it exists. Values under
+  # `environment:` below win over it.
+  env_file:
+    - path: ../../.env
+      required: false
+  environment:
+    OLLAMA_BASE_URL: ${AGENT_OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+    VLLM_BASE_URL: ${AGENT_VLLM_BASE_URL:-http://host.docker.internal:8000/v1}
+    DOCKER_AUDIT_DOCKER_HOST: ${AGENT_DOCKER_HOST:-tcp://docker-audit-socket-proxy:2375}
+    DOCKER_AUDIT_CONFIG_DIR: /app/config
+  extra_hosts:
+    # Docker Desktop already resolves host.docker.internal; this also makes it
+    # work on Linux engines.
+    - "host.docker.internal:host-gateway"
+  volumes:
+    # Same config, SQLite databases and reports as the host workflow, so runs
+    # from either side appear in `docker-audit runs`.
+    - ${AGENT_CONFIG_DIR:-../../config}:/app/config:ro
+    - ${AGENT_DATA_DIR:-../../data}:/app/data
+    - ${AGENT_OUTPUT_DIR:-../../outputs}:/app/outputs
+    # Trivy vulnerability DB + layer cache (filled by `setup`).
+    - trivy-cache:/home/agent/.cache/trivy
+  # Hardening: non-root (uid 10001, set in the image), no Linux capabilities,
+  # no privilege escalation, no Docker socket. init reaps the MCP subprocesses.
+  user: "10001:10001"
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  init: true
+  pids_limit: 512
+  tmpfs:
+    - /tmp
+
+services:
+  agent:
+    <<: *agent
+    networks:
+      - default            # egress: Ollama on the host, Trivy DB download, OpenAI
+      - docker-audit-mgmt  # the read-only Docker API proxy only
+
+  # The automated test suite, inside the image (dev dependencies + tests).
+  # No network at all: the tests use fakes, not Docker or an LLM.
+  test:
+    <<: *agent
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: test
+      args: *build-args
+    image: ${AGENT_TEST_IMAGE:-docker-audit-agent:test}
+    profiles: [test]
+    network_mode: none
+    volumes: []
+    env_file: []
+    environment: {}
+    extra_hosts: []
+    # The range.sh tests put a fake `docker` executable under /tmp; Docker mounts
+    # tmpfs noexec by default (kept for the agent service).
+    tmpfs:
+      - /tmp:exec
+
+networks:
+  # Created by deploy/socket-proxy/compose.yml (internal: no outside route).
+  docker-audit-mgmt:
+    external: true
+
+volumes:
+  trivy-cache:

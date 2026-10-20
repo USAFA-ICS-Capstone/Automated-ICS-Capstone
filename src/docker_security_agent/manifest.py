@@ -207,6 +207,11 @@ def framework_info(project_root: Path) -> FrameworkInfo:
 
     commit = git("rev-parse", "HEAD")
     status = git("status", "--porcelain", "--untracked-files=no")
+    if commit is None and os.environ.get("DOCKER_AUDIT_BUILD_COMMIT"):
+        # Container image (no .git inside): use what the image build recorded
+        # (Dockerfile build args, filled in by deploy/agent/build.sh).
+        commit = os.environ["DOCKER_AUDIT_BUILD_COMMIT"]
+        status = "dirty" if os.environ.get("DOCKER_AUDIT_BUILD_DIRTY") == "true" else ""
     return FrameworkInfo(
         package_version=__version__,
         commit=commit or "unknown",

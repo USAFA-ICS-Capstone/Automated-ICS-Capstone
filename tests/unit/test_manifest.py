@@ -72,3 +72,19 @@ def test_load_scans_by_id_requires_every_scan(tmp_path):
         repo.load_scans([42])
     assert repo.load_scans([]) == []
     repo.close()
+
+
+def test_framework_info_falls_back_to_image_build_provenance(tmp_path, monkeypatch):
+    # tmp_path is not a git checkout, like /app inside the container image.
+    from docker_security_agent.manifest import framework_info
+
+    monkeypatch.delenv("DOCKER_AUDIT_BUILD_COMMIT", raising=False)
+    assert framework_info(tmp_path).commit == "unknown"
+
+    monkeypatch.setenv("DOCKER_AUDIT_BUILD_COMMIT", "abc123")
+    monkeypatch.setenv("DOCKER_AUDIT_BUILD_DIRTY", "true")
+    info = framework_info(tmp_path)
+    assert (info.commit, info.dirty) == ("abc123", True)
+
+    monkeypatch.setenv("DOCKER_AUDIT_BUILD_DIRTY", "false")
+    assert framework_info(tmp_path).dirty is False
