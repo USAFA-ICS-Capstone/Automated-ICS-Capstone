@@ -46,11 +46,11 @@ Paths on the Mac assume this layout:
 
 You must be on SKYNET WiFi, or on the VPN, to reach the VM.
 
-### A. Log in and change the password
+### A. Log in using the password below
 
 ```bash
 ssh ai-user@10.100.60.83
-passwd                         # replace the default password you were given
+Pharaoh123                      # replace the default password you were given
 ```
 
 ### B. Verify the GPUs
