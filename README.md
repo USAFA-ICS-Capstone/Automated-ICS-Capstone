@@ -666,7 +666,7 @@ recorded as a note.
 | `docker-audit assess [--model P] [--snapshot ID] [--no-agent] [--no-scan] [--session NAME] [--objective TEXT] [--skip-model-check]` | Run an assessment |
 | `docker-audit assess --manifest FILE\|RUN_ID [--allow-drift]` | Re-run a run manifest's exact configuration on its pinned evidence |
 | `docker-audit assess ... --range-baseline NAME` | Abort unless the live range matches baseline NAME; recorded in the manifest |
-| `docker-audit range record NAME` / `range verify NAME [--since ISO]` / `range list` | Record or verify a named range baseline (read-only) |
+| `docker-audit range record NAME` / `range verify NAME [--since ISO [--project P]]` / `range list` | Record or verify a named range baseline (read-only) |
 | `deploy/grfics/range.sh save NAME` / `reset NAME` / `list` | Operator script: archive the lab as a baseline / reset the lab to it (changes the lab) |
 | `docker-audit runs [--limit N]` | List runs |
 | `docker-audit snapshots [--limit N]` | List stored snapshots |
@@ -803,12 +803,15 @@ uv run docker-audit assess --model local-qwen --range-baseline clean-v1
   database, ...) with checksums, restarts it, and runs `docker-audit range record`.
 - `reset` checks the archive checksums, runs `docker compose down --volumes`, recreates and
   restores each volume, starts the lab from **local** images (no pull, no build), waits for
-  health checks, then runs `docker-audit range verify NAME --since <reset start>`.
+  health checks, then runs `docker-audit range verify NAME --since <reset start> --project <project>`.
 - **Verification** compares a fresh read-only inventory with the baseline's fingerprint:
   images by content ID, privileges, mounts, ports, networks, compose labels (including the
   config hash), volumes and container state. Container IDs, creation times and dynamic IPs
   are ignored, because a reset always changes them. `--since` also requires every container
   and volume to be newer than the reset, which catches a volume that was not restored.
+  `--project` limits that freshness check to the reset compose project. Other resources on
+  the engine, such as the proxy the check runs through, predate the reset by design and are
+  still compared by the fingerprint.
 - `assess --range-baseline NAME` repeats the comparison before scanning and **aborts** on
   any difference. The run manifest records the baseline (`experiment.range_baseline`) and the
   check (`acquisition.range_check`, including the last verified reset).

@@ -596,6 +596,10 @@ def range_verify(
         str | None,
         typer.Option(help="ISO time the reset started: every container and volume must be newer"),
     ] = None,
+    project: Annotated[
+        str | None,
+        typer.Option(help="Limit the --since check to this compose project (what was reset)"),
+    ] = None,
 ) -> None:
     """Check that the live range matches baseline NAME (exit code 1 if not)."""
     from datetime import UTC, datetime
@@ -612,12 +616,13 @@ def range_verify(
     if since_dt is not None and since_dt.tzinfo is None:
         since_dt = since_dt.replace(tzinfo=UTC)
     snap, _ = _collect_snapshot(settings)
-    result = verify(baseline, snap, since=since_dt)
+    result = verify(baseline, snap, since=since_dt, project=project)
     path = save_verification(settings.data_dir, result)
     if result.matches:
+        scope = f"{project}'s containers and volumes" if project else "all containers and volumes"
         console.print(
             f"[green]Range matches baseline {name}[/green] (snapshot {snap.snapshot_id}"
-            + (", all containers and volumes recreated by the reset" if since_dt else "")
+            + (f", {scope} recreated by the reset" if since_dt else "")
             + f") · {path}"
         )
         return

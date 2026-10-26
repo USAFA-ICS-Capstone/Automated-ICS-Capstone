@@ -128,9 +128,12 @@ agent. It uses normal Docker access and never goes through the proxy.
 4. Recreates each volume with its labels and unpacks its archive.
 5. Starts the lab from local images only (`--no-build --pull never`) and
    waits for health.
-6. Runs `docker-audit range verify NAME --since <start>`. It compares against
-   the fingerprint, ignoring container IDs, creation times and dynamic IPs,
-   and requires every container and volume to be newer than the reset.
+6. Runs `docker-audit range verify NAME --since <start> --project <project>`.
+   It compares against the fingerprint, ignoring container IDs, creation times
+   and dynamic IPs, and requires every GRFICS container and volume to be newer
+   than the reset. Other resources on the engine (the proxy, other projects'
+   volumes) predate the reset by design; until 2026-10-26 the check covered
+   them too, so every reset failed with "created ..., before the reset".
 
 **`list`** shows baselines and their last verified reset.
 
