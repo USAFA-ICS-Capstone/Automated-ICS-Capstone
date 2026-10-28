@@ -31,7 +31,7 @@ Paths on the Mac assume this layout:
 
 1. The deterministic checks (20 rules + Trivy) assess the lab. This is the
    answer key; the agent never sees it.
-2. The agent (`DockerSecurityAssessmentAgent`, prompt v4) gets only the
+2. The agent (`DockerSecurityAssessmentAgent`, prompt v5) gets only the
    objective and the read-only MCP tools. It decides what to inspect and scan,
    and reports its own findings.
 3. Its findings are validated against the real Docker data and compared with

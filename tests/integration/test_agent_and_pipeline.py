@@ -419,7 +419,7 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     exp = m["experiment"]
     assert exp["scenario_id"] == settings.experiment.scenario_id
     assert exp["evidence"]["snapshot_id"] == result.report.snapshot_id
-    assert exp["prompt_bundle"]["version"] == "v4"
+    assert exp["prompt_bundle"]["version"] == "v5"
     assert exp["schema_versions"]["db_schema_version"] >= 4
     assert exp["models"]["assessment_agent"]["model"] == "scripted"
     assert exp["sampling"]["assessment_agent"]["temperature"] == 0.2
