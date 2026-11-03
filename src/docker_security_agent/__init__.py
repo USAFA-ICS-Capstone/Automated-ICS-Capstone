@@ -37,4 +37,6 @@ __version__ = "0.1.0"
 #   v4 - MCP tools only (no evidence tools, no deterministic findings); the first
 #        message is the objective + out-of-scope containers; the agent reports its
 #        own findings with tool/field/value evidence
-PROMPT_VERSION = "v4"
+#   v5 - coverage: inspect every container and scan every image on a checklist
+#        before finishing; one finding per affected container
+PROMPT_VERSION = "v5"
