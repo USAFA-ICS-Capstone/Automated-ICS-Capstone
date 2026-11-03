@@ -274,7 +274,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise ConfigError(f"Missing configuration file: {path}")
     try:
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {path}: {exc}") from exc
     if not isinstance(data, dict):

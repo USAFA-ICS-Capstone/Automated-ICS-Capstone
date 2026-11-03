@@ -49,7 +49,7 @@ def test_unknown_profile_raises():
 def test_invalid_config_is_reported(tmp_path: Path):
     real = load_settings().config_dir
     for f in real.glob("*.yaml"):
-        (tmp_path / f.name).write_text(f.read_text())
+        (tmp_path / f.name).write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
     (tmp_path / "models.yaml").write_text(
         "profiles:\n  broken:\n    provider: nope\n    model: x\n"
     )

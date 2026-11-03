@@ -239,7 +239,7 @@ async def test_full_live_pipeline_with_fakes(pipeline_env):
     assert c.scores.deterministic_total == len(r.findings)
     assert c.scores.agent_rejected == 1 and c.scores.agent_unmatched == 0
     assert result.comparison_md_path.name == "comparison.md"
-    md = result.comparison_md_path.read_text()
+    md = result.comparison_md_path.read_text(encoding="utf-8")
     assert "Missed by the agent" in md and "C008" in md
 
     repo = AssessmentRepository(settings.assessment_db_path)
@@ -321,7 +321,7 @@ async def test_proxy_requirement_disabled_is_recorded_and_warned(pipeline_env, m
     assert ep.require_proxy is False and ep.proxy_verified is False
     assert ep.docker_host == "unix:///var/run/docker.sock"
     assert warnings[0] in result.report.errors
-    md = result.md_path.read_text()
+    md = result.md_path.read_text(encoding="utf-8")
     assert "[!CAUTION]" in md and "require_proxy is disabled" in md
     assert "NOT verified as read-only proxy" in md
 
@@ -368,7 +368,7 @@ async def test_proxied_run_records_verified_endpoint_without_warning(pipeline_en
     assert warnings == []
     ep = result.report.docker_endpoint
     assert ep.require_proxy is True and ep.proxy_verified is True
-    assert "[!CAUTION]" not in result.md_path.read_text()
+    assert "[!CAUTION]" not in result.md_path.read_text(encoding="utf-8")
     repo = AssessmentRepository(settings.assessment_db_path)
     assert json.loads(repo.get_run(result.run_id)["docker_endpoint_json"])["proxy_verified"]
     repo.close()
@@ -413,7 +413,7 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     path = result.manifest_path
     assert path == result.md_path.parent / "manifest.json"
     assert not path.stat().st_mode & 0o222
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     m = doc["manifest"]
     assert m["run_id"] == result.run_id
     exp = m["experiment"]
@@ -444,7 +444,7 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     repo.close()
 
     # report
-    assert doc["manifest_sha256"] in result.md_path.read_text()
+    assert doc["manifest_sha256"] in result.md_path.read_text(encoding="utf-8")
 
 
 async def test_rerun_of_deterministic_manifest_replays_pinned_evidence(pipeline_env):
@@ -473,8 +473,8 @@ async def test_rerun_of_deterministic_manifest_replays_pinned_evidence(pipeline_
     finally:
         pipeline.build_servers = pipeline_build_servers
 
-    a = json.loads(first.manifest_path.read_text())
-    b = json.loads(rerun.manifest_path.read_text())
+    a = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+    b = json.loads(rerun.manifest_path.read_text(encoding="utf-8"))
     assert b["config_sha256"] == a["config_sha256"]  # same experimental configuration
     assert b["manifest_sha256"] != a["manifest_sha256"]  # but a distinct run record
     assert b["manifest"]["experiment"]["evidence"] == a["manifest"]["experiment"]["evidence"]
@@ -511,8 +511,8 @@ async def test_rerun_of_agent_manifest_runs_live_from_the_same_baseline(pipeline
     _scripted_run(holder)
     rerun = await run_assessment(new_settings, opts)
 
-    a = json.loads(first.manifest_path.read_text())["manifest"]
-    b = json.loads(rerun.manifest_path.read_text())["manifest"]
+    a = json.loads(first.manifest_path.read_text(encoding="utf-8"))["manifest"]
+    b = json.loads(rerun.manifest_path.read_text(encoding="utf-8"))["manifest"]
     assert b["acquisition"]["mode"] == "live" and b["acquisition"]["range_check"]
     assert b["replay_of"]["run_id"] == first.run_id
     # Same configuration; only the freshly collected evidence differs.
@@ -522,7 +522,7 @@ async def test_rerun_of_agent_manifest_runs_live_from_the_same_baseline(pipeline
 
 
 def first_limits(result) -> int:
-    doc = json.loads(result.manifest_path.read_text())
+    doc = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     return doc["manifest"]["experiment"]["agent"]["max_turns"]
 
 
@@ -531,7 +531,7 @@ async def test_rerun_refuses_altered_manifest_or_prompt_drift(pipeline_env, monk
     first = await run_assessment(settings, AssessOptions(use_agent=False, scan=False))
 
     # altered file
-    doc = json.loads(first.manifest_path.read_text())
+    doc = json.loads(first.manifest_path.read_text(encoding="utf-8"))
     doc["manifest"]["experiment"]["objective"] = "something else"
     altered = tmp_path / "altered.json"
     altered.write_text(json.dumps(doc))
@@ -562,7 +562,7 @@ async def test_range_baseline_is_checked_and_recorded_in_manifest(pipeline_env):
     result = await run_assessment(
         settings, AssessOptions(use_agent=False, scan=False, range_baseline="clean")
     )
-    m = json.loads(result.manifest_path.read_text())["manifest"]
+    m = json.loads(result.manifest_path.read_text(encoding="utf-8"))["manifest"]
     assert m["experiment"]["range_baseline"] == {
         "name": "clean",
         "fingerprint_sha256": baseline.fingerprint_sha256,
@@ -573,8 +573,8 @@ async def test_range_baseline_is_checked_and_recorded_in_manifest(pipeline_env):
     # a manifest re-run carries the baseline forward: same configuration
     new_settings, opts = options_from_manifest(settings, result.run_id)
     rerun = await run_assessment(new_settings, opts)
-    a = json.loads(result.manifest_path.read_text())
-    b = json.loads(rerun.manifest_path.read_text())
+    a = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    b = json.loads(rerun.manifest_path.read_text(encoding="utf-8"))
     assert b["config_sha256"] == a["config_sha256"]
     assert b["manifest"]["acquisition"]["range_check"] is None  # replay: nothing re-checked
 

@@ -255,7 +255,7 @@ def load_manifest(settings: Settings, source: str) -> RunManifest:
     repo = AssessmentRepository(settings.assessment_db_path)
     try:
         if path.is_file():
-            manifest = parse_manifest_document(path.read_text(), str(path))
+            manifest = parse_manifest_document(path.read_text(encoding="utf-8"), str(path))
         else:
             text = repo.load_manifest_json(source)
             if not text:

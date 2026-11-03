@@ -56,9 +56,9 @@ def test_manifest_file_is_write_once_and_tamper_evident(settings, tmp_path):
     path = write_manifest(m, tmp_path)
     with pytest.raises(FileExistsError):
         write_manifest(m, tmp_path)
-    assert parse_manifest_document(path.read_text()) == m
+    assert parse_manifest_document(path.read_text(encoding="utf-8")) == m
 
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     doc["manifest"]["experiment"]["evidence"]["scan_ids"] = [1]
     with pytest.raises(ConfigError, match="modified after the run"):
         parse_manifest_document(json.dumps(doc))

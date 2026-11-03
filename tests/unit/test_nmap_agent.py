@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from agents import ModelSettings
+from agents import Model, ModelSettings
 
 from docker_security_agent.agents.nmap_network_agent import (
     ICS_PORTS,
@@ -85,7 +85,7 @@ def _make_bundle(structured_output: str = "native") -> ModelBundle:
         structured_output=structured_output,
         temperature=0.0,
     )
-    model_mock = MagicMock()
+    model_mock = MagicMock(spec=Model)
     return ModelBundle(model=model_mock, settings=ModelSettings(), profile=profile)
 
 

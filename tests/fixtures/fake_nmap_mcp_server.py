@@ -161,7 +161,7 @@ def _log(tool: str, args: dict) -> None:
 def build_nmap_server(scenario: str = "default") -> MCPServer:
     server = MCPServer("fake-nmap")
 
-    @server.tool()
+    @server.tool(name="do-nmap")
     def do_nmap(target: str, arguments: str = "") -> str:
         """Run nmap against the given target with optional flag string."""
         _log("do-nmap", {"target": target, "arguments": arguments})

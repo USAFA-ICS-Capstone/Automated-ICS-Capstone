@@ -946,7 +946,7 @@ def nmap_scan(
             import pathlib
             out = pathlib.Path(output_json)
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(assessment.model_dump_json(indent=2))
+            out.write_text(assessment.model_dump_json(indent=2), encoding="utf-8")
             console.print(f"[green]JSON written to {output_json}[/green]")
 
     asyncio.run(_run())
