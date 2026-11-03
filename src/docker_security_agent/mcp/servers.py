@@ -9,12 +9,15 @@ Every tool call goes through the same pipeline::
       caller (LLM via SDK, or our collector)
         |
         v
+    [0] EvidenceStore.find      -> (agent, h2) exact repeat? answer with its reference
     [1] ToolPolicy.check        -> refuse unapproved tools / bad arguments
     [2] budget check            -> refuse when the agent is out of tool calls
     [3] MCPServerStdio.call_tool-> the real MCP request (stdio subprocess)
     [4] Redactor.redact_json    -> scrub secrets from the result
-    [5] shape_result + to_text  -> (agent only) compact + size-cap the result
     [6] ToolCallRecorder.add    -> metrics + SQLite audit trail
+    [7] EvidenceStore.add       -> (agent, h2) store the full result as E<n>
+    [8] shape_result + to_text  -> (agent only) lossless compaction, cap at a line
+                                   boundary, "[E<n>] tool subject" header
         |
         v
     result returned to the caller
@@ -46,6 +49,7 @@ from agents.mcp import MCPServerStdio, create_static_tool_filter
 from mcp.types import CallToolResult, TextContent
 
 from docker_security_agent.config import MCPServerConfig
+from docker_security_agent.mcp.evidence import EvidenceStore
 from docker_security_agent.mcp.policy import ToolPolicy
 from docker_security_agent.mcp.recorder import ToolCallRecorder
 from docker_security_agent.mcp.redaction import Redactor, find_secret_leaks
@@ -118,6 +122,8 @@ class GuardedMCPServer(MCPServerStdio):
         self.redactor = redactor
         self.recorder = recorder
         self.max_result_chars = max_result_chars
+        # Set by the pipeline for the agent phase (harness h2); None = h1 behaviour.
+        self.evidence: EvidenceStore | None = None
 
     # ------------------------------------------------------------------ SDK path
 
@@ -127,13 +133,44 @@ class GuardedMCPServer(MCPServerStdio):
         arguments: dict[str, Any] | None,
         meta: dict[str, Any] | None = None,
     ) -> CallToolResult:
-        """Invoked by the Agents SDK when the LLM calls one of our tools."""
+        """Invoked by the Agents SDK when the LLM calls one of our tools.
+
+        With an evidence store (harness h2): an exact repeat of an earlier call
+        is answered with the earlier reference instead of being run again, and
+        every result is stored in full before its shaped form, headed by its
+        reference, goes to the model.
+        """
+        store = self.evidence
+        if store is not None:
+            logged_args, _ = self.redactor.redact_json(arguments or {})
+            earlier = store.find(self.name, tool_name, logged_args)
+            if earlier is not None:
+                self.recorder.add(
+                    phase="agent",
+                    server=self.name,
+                    tool=tool_name,
+                    arguments=logged_args,
+                    status="duplicate",
+                    error=f"same arguments as {earlier.ref}",
+                )
+                return _text_result(duplicate_message(earlier.ref, tool_name), is_error=False)
+
         ok, payload = await self._guarded_call(tool_name, arguments, phase="agent", meta=meta)
-        if ok:
-            text = to_text(shape_result(tool_name, payload), self.max_result_chars)
-        else:
-            text = str(payload)  # an error/refusal message for the model
-        return CallToolResult(content=[TextContent(type="text", text=text)], is_error=not ok)
+        if not ok:
+            return _text_result(str(payload), is_error=True)  # an error/refusal message
+        if store is None:
+            return _text_result(to_text(shape_result(tool_name, payload), self.max_result_chars))
+
+        stored = store.add(self.name, tool_name, logged_args, payload)
+        header = f"[{stored.ref}] {tool_name}" + (f" {stored.subject}" if stored.subject else "")
+        body = to_text(
+            shape_result(tool_name, payload),
+            max(self.max_result_chars - len(header) - 1, 1),
+            ref=stored.ref,
+        )
+        text = f"{header}\n{body}"
+        store.record_shaped_size(stored.ref, len(text))
+        return _text_result(text)
 
     # ------------------------------------------------------------ application path
 
@@ -224,7 +261,7 @@ class GuardedMCPServer(MCPServerStdio):
             )
             return False, f"Tool error: {message}"
 
-        # [6] record success ([5] shaping happens in call_tool for the agent path)
+        # [6] record success ([7] storing and [8] shaping happen in call_tool, agent path)
         self.recorder.add(
             phase=phase,
             server=self.name,
@@ -240,3 +277,15 @@ class GuardedMCPServer(MCPServerStdio):
 
 def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+def _text_result(text: str, *, is_error: bool = False) -> CallToolResult:
+    return CallToolResult(content=[TextContent(type="text", text=text)], is_error=is_error)
+
+
+def duplicate_message(ref: str, tool: str) -> str:
+    return (
+        f"Not run again: {tool} was already called with exactly these arguments, and its "
+        f"result is stored as {ref}. Use that result. If it is no longer in your context, "
+        f'call evidence_get("{ref}") (optionally with select=...) instead of repeating the call.'
+    )

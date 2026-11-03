@@ -14,9 +14,17 @@ from agents import ModelSettings, SQLiteSession
 from agents.testing import ScriptedModel, assistant_message, function_call
 from builders import build_snapshot
 
-from docker_security_agent.agents.security_assessment import build_agent, build_input, run_agent
+from docker_security_agent.agents.context_filter import ContextFilter
+from docker_security_agent.agents.harness_tools import build_harness_tools
+from docker_security_agent.agents.security_assessment import (
+    build_agent,
+    build_input,
+    merge_sections,
+    run_agent,
+)
 from docker_security_agent.config import ConfigError, ModelProfile
 from docker_security_agent.llm.factory import ModelBundle
+from docker_security_agent.mcp.evidence import EvidenceStore
 from docker_security_agent.mcp.policy import ToolPolicy
 from docker_security_agent.mcp.recorder import ToolCallRecorder
 from docker_security_agent.mcp.redaction import Redactor
@@ -88,6 +96,96 @@ def _mcp_servers(settings, recorder, roles=("docker_inspection",)):
     return build_servers(
         settings, policy, Redactor(settings.mcp.redaction), recorder, roles=set(roles)
     )
+
+
+def _outputs(call) -> dict[str, str]:
+    """call_id -> text of each tool result in what the model received."""
+    out = {}
+    for it in call.input:
+        if isinstance(it, dict) and it.get("type") == "function_call_output":
+            o = it["output"]
+            out[it["call_id"]] = o if isinstance(o, str) else "".join(p.get("text", "") for p in o)
+    return out
+
+
+async def test_harness_h2_in_the_agent_loop(fake_mcp_settings, tmp_path):
+    """Real SDK loop + real MCP subprocesses: references, repeat blocking,
+    evidence_get, a recorded section, stubbing, and the section merge."""
+    section = {"resource_name": "router", "findings": [ROUTER_CAPS], "evidence_refs": ["E1"],
+               "notes": []}
+    model = ScriptedModel(
+        [
+            [function_call("container_inspect", {"id_or_name": "router"}, call_id="c1")],
+            [function_call("container_inspect", {"id_or_name": "router"}, call_id="c2")],
+            [function_call("evidence_get", {"ref": "E1", "select": "HostConfig.CapAdd"},
+                           call_id="c3")],
+            [function_call("record_container_section", section, call_id="c4")],
+            [function_call("container_inspect", {"id_or_name": "simulation"}, call_id="c5")],
+            [assistant_message(_final_json(SOCKET))],
+        ]
+    )
+    recorder = ToolCallRecorder(20)
+    # A database-backed store, as in the pipeline: the SDK runs tools on worker
+    # threads unless they are async, and SQLite rejects cross-thread use.
+    db = tmp_path / "assessments.db"
+    repo = AssessmentRepository(db)
+    repo.create_run(run_id="t-h2", mode="live", objective="o", model_profile=None,
+                    model_provider=None, model_id=None, model_config=None,
+                    prompt_version="v6", session_id=None)
+    store = EvidenceStore("t-h2", db)
+    async with connect(_mcp_servers(fake_mcp_settings, recorder)) as manager:
+        for server in manager.active_servers:
+            server.evidence = store
+        agent = build_agent(
+            _bundle(model),
+            mcp_servers=manager.active_servers,
+            tools=build_harness_tools(store, recorder, 12_000),
+        )
+        outcome = await run_agent(
+            agent,
+            build_input("assess", []),
+            max_turns=10,
+            timeout_seconds=60,
+            session=None,
+            tracing_enabled=False,
+            run_id="t-h2",
+            input_filter=ContextFilter(store, keep_recent=1),
+        )
+    merge_sections(outcome, list(store.sections.values()))
+    store.close()
+
+    assert outcome.status == "ok", outcome.error
+    saved = repo.conn.execute("SELECT resource_name FROM agent_sections").fetchall()
+    assert [r["resource_name"] for r in saved] == ["router"]
+    assert repo.conn.execute("SELECT COUNT(*) FROM tool_outputs").fetchone()[0] == 2
+    repo.close()
+    assert [f.title for f in outcome.assessment.findings] == [
+        "Router has NET_RAW",  # from the section
+        "Docker socket mounted",  # from the final answer
+    ]
+    # the repeat was answered from the store: not run again, not stored again
+    assert list(store.outputs) == ["E1", "E2"]
+    assert ("container_inspect", "duplicate") in [(r.tool, r.status) for r in recorder.records]
+    calls = [json.loads(line) for line in (tmp_path / "mcp_calls.jsonl").read_text().splitlines()]
+    assert sum(c["tool"] == "container_inspect" and c["args"] == {"id_or_name": "router"}
+               for c in calls) == 1
+
+    seen = [_outputs(c) for c in model.calls]
+    assert seen[1]["c1"].startswith("[E1] container_inspect router\n")
+    assert "HostConfig.CapAdd: [NET_ADMIN, NET_RAW]" in seen[1]["c1"]
+    assert "stored as E1" in seen[2]["c2"]
+    fetched = seen[3]["c3"]
+    assert fetched.startswith("[E1] container_inspect router (select=HostConfig.CapAdd)")
+    assert fetched.splitlines()[1:] == ["HostConfig.CapAdd: [NET_ADMIN, NET_RAW]"]
+    assert seen[4]["c4"].startswith("Section for router recorded (1 findings)")
+    # last model call: only the newest MCP result is kept in full; E1 is a stub that
+    # points at the recorded section; the fetched copy is never stubbed
+    last = seen[-1]
+    assert last["c1"].startswith("[E1] container_inspect router: full result removed")
+    assert "Your section for router is already recorded." in last["c1"]
+    assert last["c5"].startswith("[E2] container_inspect simulation\n")
+    assert last["c3"] == fetched
+    assert outcome.usage["requests"] == 6
 
 
 async def test_agent_uses_only_mcp_tools(fake_mcp_settings, tmp_path):
@@ -419,7 +517,9 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     exp = m["experiment"]
     assert exp["scenario_id"] == settings.experiment.scenario_id
     assert exp["evidence"]["snapshot_id"] == result.report.snapshot_id
-    assert exp["prompt_bundle"]["version"] == "v5"
+    assert exp["prompt_bundle"]["version"] == "v6"
+    assert exp["prompt_bundle"]["harness_version"] == "h2"
+    assert exp["agent"]["keep_recent_tool_outputs"] == 8
     assert exp["schema_versions"]["db_schema_version"] >= 4
     assert exp["models"]["assessment_agent"]["model"] == "scripted"
     assert exp["sampling"]["assessment_agent"]["temperature"] == 0.2
@@ -441,6 +541,11 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     assert exp["evidence"]["scan_ids"] == sorted(saved) and len(saved) == 2
     with pytest.raises(ValueError):  # write-once
         repo.save_manifest(result.run_id, "{}", "x", "y")
+    # h2: the agent's container_list result is stored in full under E1
+    (ref, tool, raw), = repo.conn.execute(
+        "SELECT ref, tool, result_json FROM tool_outputs WHERE run_id = ?", (result.run_id,)
+    ).fetchall()
+    assert (ref, tool) == ("E1", "container_list") and '"ResolvConfPath"' in raw
     repo.close()
 
     # report

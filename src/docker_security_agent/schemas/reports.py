@@ -58,6 +58,22 @@ class AgentFinding(BaseModel):
     remediation: str
 
 
+class ContainerSection(BaseModel):
+    """One container's part of the assessment, written by the agent as it goes (h2).
+
+    Same finding schema as the final assessment: structured findings with
+    tool/field/value evidence, not a free-text summary. The harness merges the
+    sections' findings into ``AgentAssessment.findings`` before validation.
+    """
+
+    resource_name: str = Field(description="Exact name of the container this section covers")
+    findings: list[AgentFinding] = Field(description="Every issue found on this container")
+    evidence_refs: list[str] = Field(
+        description="References (E1, E2...) of the tool results this section is based on"
+    )
+    notes: list[str] = Field(description="What you could not verify for this container; [] if none")
+
+
 class AgentAssessment(BaseModel):
     """Structured output of DockerSecurityAssessmentAgent."""
 

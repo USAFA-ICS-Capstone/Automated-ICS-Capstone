@@ -40,7 +40,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from docker_security_agent import PROMPT_VERSION, __version__
+from docker_security_agent import HARNESS_VERSION, PROMPT_VERSION, __version__
 from docker_security_agent.config import ConfigError, ModelProfile, Settings
 from docker_security_agent.memory.database import SCHEMA_VERSION
 from docker_security_agent.schemas.reports import AgentAssessment, DockerEndpointInfo, Report
@@ -92,6 +92,9 @@ class RangeCheck(_Frozen):
 class PromptBundle(_Frozen):
     version: str  # PROMPT_VERSION
     instructions_sha256: str  # the exact agent instructions text
+    # What the harness shows the model and lets it do (defaults = older manifests).
+    harness_version: str = "h1"  # HARNESS_VERSION
+    shaping_version: str = "s1"  # mcp/shaping.py SHAPING_VERSION
 
 
 class SchemaVersions(_Frozen):
@@ -110,6 +113,7 @@ class AgentSettings(_Frozen):
     max_tool_calls: int
     max_duration_seconds: float
     max_tool_result_chars: int
+    keep_recent_tool_outputs: int | None = None  # h2 context filter; None = none (h1)
     named_session: bool  # True = --session was used; earlier conversation may be in context
 
 
@@ -225,8 +229,14 @@ def framework_info(project_root: Path) -> FrameworkInfo:
 def prompt_bundle() -> PromptBundle:
     # Imported here: the agent module pulls in the Agents SDK.
     from docker_security_agent.agents.security_assessment import INSTRUCTIONS
+    from docker_security_agent.mcp.shaping import SHAPING_VERSION
 
-    return PromptBundle(version=PROMPT_VERSION, instructions_sha256=_text_sha256(INSTRUCTIONS))
+    return PromptBundle(
+        version=PROMPT_VERSION,
+        instructions_sha256=_text_sha256(INSTRUCTIONS),
+        harness_version=HARNESS_VERSION,
+        shaping_version=SHAPING_VERSION,
+    )
 
 
 def schema_versions() -> SchemaVersions:
@@ -377,8 +387,9 @@ def drift(manifest: RunManifest, project_root: Path) -> tuple[list[str], list[st
     blocking = []
     if exp.prompt_bundle != prompt_bundle():
         blocking.append(
-            f"prompt bundle changed ({exp.prompt_bundle.version} -> {PROMPT_VERSION}, "
-            "or the instructions text differs)"
+            f"prompt bundle changed (prompt {exp.prompt_bundle.version} -> {PROMPT_VERSION}, "
+            f"harness {exp.prompt_bundle.harness_version} -> {HARNESS_VERSION}, "
+            "or the instructions text / shaping differs)"
         )
     if exp.schema_versions != schema_versions():
         blocking.append("report / database / agent-output schema changed")
@@ -412,6 +423,11 @@ def apply_manifest(settings: Settings, manifest: RunManifest) -> tuple[Settings,
             max_tool_calls=a.max_tool_calls,
             max_duration_seconds=a.max_duration_seconds,
             max_tool_result_chars=a.max_tool_result_chars,
+            **(
+                {"keep_recent_tool_outputs": a.keep_recent_tool_outputs}
+                if a.keep_recent_tool_outputs is not None
+                else {}
+            ),
         )
     profile_name = None
     if ASSESSOR_ROLE in exp.models:

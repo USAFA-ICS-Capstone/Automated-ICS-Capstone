@@ -105,6 +105,8 @@ class AgentLimits(BaseModel):
     max_tool_calls: int = 100
     max_duration_seconds: float = 3600
     max_tool_result_chars: int = 12000
+    # h2: tool results kept in full before each model call; older ones become stubs
+    keep_recent_tool_outputs: int = 8
 
 
 class SessionConfig(BaseModel):

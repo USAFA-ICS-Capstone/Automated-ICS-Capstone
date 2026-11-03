@@ -39,4 +39,19 @@ __version__ = "0.1.0"
 #        own findings with tool/field/value evidence
 #   v5 - coverage: inspect every container and scan every image on a checklist
 #        before finishing; one finding per affected container
-PROMPT_VERSION = "v5"
+#   v6 - (with harness h2) one container at a time, recording each container's
+#        section right after analysing it; tool results carry references (E7)
+#        and can be fetched back; final findings only for what no section covers
+PROMPT_VERSION = "v6"
+
+# Bumped whenever the harness around the agent changes what the model sees or
+# can do, independently of the prompt text. Recorded in every run manifest.
+#   h1 - full shaped tool results stay in context for the whole run; results cut
+#        mid-text at max_tool_result_chars
+#   h2 - lossless shaping (inspect -> "Path: value" lines, Trivy grouped by package,
+#        exact duplicates removed, cut at line boundaries); every full result stored
+#        (tool_outputs) under a reference + evidence_get; per-container sections
+#        (record_container_section) merged into the assessment; older results
+#        replaced by reference stubs before each model call (keep the last N);
+#        exact repeat calls answered with the earlier reference
+HARNESS_VERSION = "h2"

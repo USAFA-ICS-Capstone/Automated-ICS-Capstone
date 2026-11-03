@@ -53,11 +53,14 @@ from pathlib import Path
 
 from agents import set_tracing_disabled
 
-from docker_security_agent import PROMPT_VERSION
+from docker_security_agent import HARNESS_VERSION, PROMPT_VERSION
+from docker_security_agent.agents.context_filter import ContextFilter
+from docker_security_agent.agents.harness_tools import build_harness_tools
 from docker_security_agent.agents.security_assessment import (
     AgentRunOutcome,
     build_agent,
     build_input,
+    merge_sections,
     run_agent,
 )
 from docker_security_agent.config import ConfigError, Settings
@@ -83,6 +86,7 @@ from docker_security_agent.manifest import (
     parse_manifest_document,
     write_manifest,
 )
+from docker_security_agent.mcp.evidence import EvidenceStore
 from docker_security_agent.mcp.policy import ToolPolicy
 from docker_security_agent.mcp.recorder import ToolCallRecorder
 from docker_security_agent.mcp.redaction import Redactor
@@ -764,26 +768,50 @@ async def _agent_phase(
         for c in snapshot.containers
         if any(fnmatch.fnmatchcase(c.name, p) for p in settings.rules.ignore_containers)
     ]
-    agent = build_agent(bundle, mcp_servers=mcp_servers)
     limits = settings.agent.limits
-    _say(
-        opts,
-        f"Running {agent.name} with {bundle.profile.name}, MCP tools only "
-        f"(max {limits.max_turns} turns, {limits.max_tool_calls} tool calls, "
-        f"{limits.max_duration_seconds:.0f}s)...",
-    )
-    outcome = await run_agent(
-        agent,
-        build_input(objective, out_of_scope),
-        max_turns=limits.max_turns,
-        timeout_seconds=limits.max_duration_seconds,
-        session=open_session(session_id, settings.session_db_path),
-        tracing_enabled=settings.agent.tracing_enabled,
-        run_id=run_id,
-    )
+    # Harness h2: every full tool result is stored under a reference as it is
+    # produced; the agent can fetch results back and records one section per
+    # container; older results become reference stubs before each model call.
+    store = EvidenceStore(run_id, settings.assessment_db_path)
+    for server in mcp_servers:
+        server.evidence = store
+    try:
+        agent = build_agent(
+            bundle,
+            mcp_servers=mcp_servers,
+            tools=build_harness_tools(store, recorder, limits.max_tool_result_chars),
+        )
+        _say(
+            opts,
+            f"Running {agent.name} with {bundle.profile.name}, MCP tools + evidence store "
+            f"(harness {HARNESS_VERSION}; max {limits.max_turns} turns, "
+            f"{limits.max_tool_calls} tool calls, {limits.max_duration_seconds:.0f}s, "
+            f"last {limits.keep_recent_tool_outputs} results kept in full)...",
+        )
+        outcome = await run_agent(
+            agent,
+            build_input(objective, out_of_scope),
+            max_turns=limits.max_turns,
+            timeout_seconds=limits.max_duration_seconds,
+            session=open_session(session_id, settings.session_db_path),
+            tracing_enabled=settings.agent.tracing_enabled,
+            run_id=run_id,
+            input_filter=ContextFilter(store, keep_recent=limits.keep_recent_tool_outputs),
+        )
+        merge_sections(outcome, list(store.sections.values()))
+    finally:
+        for server in mcp_servers:
+            server.evidence = None
+        store.close()
     _say(
         opts,
         f"Agent finished: {outcome.status} in {outcome.duration_seconds}s "
-        f"({recorder.agent_calls} tool calls)",
+        f"({recorder.agent_calls} tool calls, {len(store.outputs)} stored results, "
+        f"{len(store.sections)} container sections)",
     )
+    if outcome.partial:
+        outcome.error = (
+            (outcome.error + " | " if outcome.error else "")
+            + f"partial assessment built from {len(store.sections)} recorded container sections"
+        )
     return outcome

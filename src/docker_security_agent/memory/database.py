@@ -16,6 +16,11 @@ scans         one row per image scan (linked to the snapshot it belongs to)
 vulnerabilities  every vulnerability Trivy reported for a scan
 findings      every finding of a run (rule, scanner and agent), with evidence
 tool_calls    audit trail of every MCP/function tool call in a run
+tool_outputs  (v5) the full redacted result of every agent tool call, keyed by
+              the short reference the agent sees (E1, E2...); what
+              ``evidence_get`` reads back and the audit trail of what the
+              agent was shown
+agent_sections (v5) the per-container sections the agent wrote during a run
 
 Large/nested values (evidence lists, snapshot documents, metrics) are stored
 as JSON text; everything you would filter on has its own column.
@@ -29,7 +34,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_info (
@@ -138,6 +143,27 @@ CREATE TABLE IF NOT EXISTS tool_calls (
     error           TEXT
 );
 
+CREATE TABLE IF NOT EXISTS tool_outputs (
+    run_id          TEXT NOT NULL REFERENCES runs(run_id),
+    ref             TEXT NOT NULL,         -- E1, E2... as shown to the agent
+    seq             INTEGER NOT NULL,
+    created_at      TEXT NOT NULL,
+    server          TEXT NOT NULL,
+    tool            TEXT NOT NULL,
+    arguments_json  TEXT NOT NULL,         -- redacted
+    result_json     TEXT NOT NULL,         -- full result: redacted, not shaped
+    shaped_chars    INTEGER,               -- size of what the model was sent
+    PRIMARY KEY (run_id, ref)
+);
+
+CREATE TABLE IF NOT EXISTS agent_sections (
+    run_id          TEXT NOT NULL REFERENCES runs(run_id),
+    resource_name   TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    data_json       TEXT NOT NULL,         -- ContainerSection as written by the agent
+    PRIMARY KEY (run_id, resource_name)
+);
+
 CREATE INDEX IF NOT EXISTS idx_scans_snapshot ON scans(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_vulns_scan ON vulnerabilities(scan_id);
 CREATE INDEX IF NOT EXISTS idx_findings_run ON findings(run_id);
@@ -171,6 +197,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         "agent_report_json",  # v4
         "comparison_json",  # v4
     ]
+    # v5 only adds tables (tool_outputs, agent_sections): created by SCHEMA above.
     run_cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
     for col in added_run_columns:
         if col not in run_cols:
