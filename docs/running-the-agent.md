@@ -10,8 +10,8 @@ Where things run:
 
 ```text
 Mac (repository root)                          FAIR Lab GPU VM (ai-user@10.100.60.83)
-├─ docker-audit (agent + deterministic checks)  └─ vLLM serving Qwen/Qwen3-32B
-├─ Docker Desktop: GRFICS lab, socket proxy        on 4x NVIDIA RTX A6000 (48 GB each)
+├─ docker-audit (agent + deterministic checks)  └─ vLLM serving Qwen/Qwen3-32B, 131k context
+├─ Docker Desktop: GRFICS lab, socket proxy        (YaRN), on 4x NVIDIA RTX A6000 (48 GB each)
 └─ localhost:8000 ══════ SSH tunnel ══════════▶   localhost:8000
 ```
 
@@ -31,7 +31,7 @@ Paths on the Mac assume this layout:
 
 1. The deterministic checks (20 rules + Trivy) assess the lab. This is the
    answer key; the agent never sees it.
-2. The agent (`DockerSecurityAssessmentAgent`, prompt v5) gets only the
+2. The agent (`DockerSecurityAssessmentAgent`, prompt v6, harness h2) gets only the
    objective and the read-only MCP tools. It decides what to inspect and scan,
    and reports its own findings.
 3. Its findings are validated against the real Docker data and compared with
@@ -76,10 +76,46 @@ pip install vllm
 ### D. Choose an API key
 
 Pick a secret string. It goes on the `vllm serve` command line (step 2) and in
-the Mac's `.env` (one-time setup E). Do not commit it or paste it into chat.
+the Mac's `.env` (see "One-time setup: Mac"). Do not commit it or paste it into chat.
 
-The first `vllm serve` downloads Qwen3-32B (about 65 GB) to
-`~/.cache/huggingface`; later starts take a minute or two.
+### E. Download Qwen3-32B and create the 131k-context model folder
+
+Qwen3-32B natively handles 32,768 tokens (40,960 at most). Covering every GRFICS
+container needs more, so the agent runs it at 131,072 tokens with **YaRN**, the
+context extension Qwen documents for Qwen3. In vLLM 0.32.0 the command-line
+flags for this (`--rope-scaling`, `--hf-overrides`) do not work; the working
+method is a model folder whose `config.json` turns YaRN on. The weights are
+linked from the Hugging Face cache, so nothing is copied.
+
+Download the weights once (about 65 GB, to `~/.cache/huggingface`):
+
+```bash
+source ~/vllm/bin/activate
+hf download Qwen/Qwen3-32B          # or: huggingface-cli download Qwen/Qwen3-32B
+```
+
+Then create the folder (run once; safe to run again):
+
+```bash
+SNAP=$(ls -d ~/.cache/huggingface/hub/models--Qwen--Qwen3-32B/snapshots/*/ | head -1)
+DST=~/models/Qwen3-32B-yarn; mkdir -p "$DST"
+for f in "$SNAP"*; do ln -sf "$(readlink -f "$f")" "$DST/$(basename "$f")"; done
+rm -f "$DST/config.json"
+python3 - <<'EOF'
+import glob, json, os
+snap = sorted(glob.glob(os.path.expanduser("~/.cache/huggingface/hub/models--Qwen--Qwen3-32B/snapshots/*/")))[0]
+cfg = json.load(open(snap + "config.json"))
+yarn = {"rope_type": "yarn", "factor": 4.0, "original_max_position_embeddings": 32768}
+cfg.update(rope_scaling=yarn, rope_parameters={**yarn, "rope_theta": cfg.get("rope_theta", 1000000)},
+           max_position_embeddings=131072)
+json.dump(cfg, open(os.path.expanduser("~/models/Qwen3-32B-yarn/config.json"), "w"), indent=2)
+print({k: cfg[k] for k in ("max_position_embeddings", "rope_scaling")})
+EOF
+ls -l "$DST" | head          # weights are links (->) into the cache; config.json is a real file
+```
+
+Raising `max_position_embeddings` removes vLLM's own length check, so a server
+that starts does not prove YaRN is active. Step 5 checks it.
 
 ## One-time setup: Mac
 
@@ -121,35 +157,46 @@ ssh ai-user@10.100.60.83
 tmux new -s vllm                # or `tmux attach -t vllm` if it is still running
 source ~/vllm/bin/activate
 
-vllm serve Qwen/Qwen3-32B \
+vllm serve ~/models/Qwen3-32B-yarn \
+  --served-model-name Qwen/Qwen3-32B \
+  --host 127.0.0.1 --port 8000 \
   --tensor-parallel-size 4 \
-  --max-model-len 32768 \
+  --max-model-len 131072 \
   --enable-auto-tool-choice --tool-call-parser hermes \
   --reasoning-parser qwen3 \
   --api-key <your-secret>
 ```
 
+- `~/models/Qwen3-32B-yarn` is the YaRN folder from one-time setup E. Serving
+  `Qwen/Qwen3-32B` directly gives the old 32k setup, which is too small for the
+  agent to cover every container.
+- `--served-model-name Qwen/Qwen3-32B` keeps the name `.env` and the
+  `local-vllm` profile expect. Both setups report this name, so the context
+  length is not visible in the model name: step 5 checks it.
+- `--host 127.0.0.1` keeps the server reachable only through the SSH tunnel,
+  not from the SKYNET network.
 - `--tensor-parallel-size 4` splits the model across the four GPUs.
-- `--max-model-len 32768` is the agent's context window (32k tokens).
+- `--max-model-len 131072` is the agent's context window (131k tokens).
 - `--enable-auto-tool-choice --tool-call-parser hermes` turns on tool calling;
   without them the agent cannot use its tools.
 - `--reasoning-parser qwen3` separates Qwen3's thinking from its answer.
 
-Wait for `Application startup complete`. Then detach with `Ctrl-b` `d` (the
-server keeps running) and `exit` the SSH session. `nvidia-smi` on the VM now
-shows roughly 40+ GB used on each GPU: vLLM reserves about 90% of each GPU's
-memory up front.
+Loading takes a few minutes (longer while another large download writes to the
+same disk). Wait for `Application startup complete`. Then detach with `Ctrl-b`
+`d` (the server keeps running) and `exit` the SSH session. `nvidia-smi` on the
+VM now shows roughly 40+ GB used on each GPU: vLLM reserves about 90% of each
+GPU's memory up front.
 
 ### 3. Open the SSH tunnel (Mac)
 
 In a separate Mac terminal, and leave it open for the whole experiment:
 
 ```bash
-ssh -N -L 8000:localhost:8000 ai-user@10.100.60.83
+ssh -N -o ServerAliveInterval=30 -L 8000:localhost:8000 ai-user@10.100.60.83
 ```
 
 It prints nothing while it works. If it closes, the agent loses the model
-mid-run.
+mid-run. `ServerAliveInterval=30` keeps an idle tunnel from being dropped.
 
 ### 4. Prepare the shell (Mac)
 
@@ -174,6 +221,44 @@ The `local-vllm` row (model `Qwen/Qwen3-32B`) must show **Usable** `OK`,
 1 column 1 (char 0)` is expected and harmless: the probe allows only 256 output tokens and Qwen3 spends
 them all thinking. Real runs have no such cap, and `local-vllm` uses
 `structured_output: prompted`, which does not depend on this probe.
+
+Then check that the server is the 131k one:
+
+```bash
+set -a; . ./.env; set +a
+curl -s -H "Authorization: Bearer $VLLM_API_KEY" http://localhost:8000/v1/models \
+  | python3 -c 'import json,sys; [print(m["id"], m.get("root"), m.get("max_model_len")) for m in json.load(sys.stdin)["data"]]'
+```
+
+Expected: `Qwen/Qwen3-32B /home/ai-user/models/Qwen3-32B-yarn 131072`. If it shows
+`Qwen/Qwen3-32B 32768`, the server was started the old way: restart it as in
+step 2.
+
+The first time after creating the YaRN folder (or after changing vLLM), also
+check that YaRN really works past the native limit. This hides a code at the
+start of a ~55k-token prompt; the model must return it exactly:
+
+```bash
+set -a; . ./.env; set +a
+python3 - <<'EOF'
+import json, os, random, urllib.request
+random.seed(11)
+words = "valve pump sensor relay setpoint pressure tank flow reactor alarm operator console network switch firewall".split()
+prompt = ("Remember this: the secret code is AMBER-FALCON-3058.\n\n"
+          + " ".join(random.choice(words) for _ in range(52000))
+          + "\n\nQuestion: what is the secret code stated at the very beginning? Reply with the code only.")
+req = urllib.request.Request("http://localhost:8000/v1/chat/completions",
+    data=json.dumps({"model": "Qwen/Qwen3-32B", "max_tokens": 2048, "temperature": 0,
+                     "messages": [{"role": "user", "content": prompt}]}).encode(),
+    headers={"Authorization": "Bearer " + os.environ["VLLM_API_KEY"], "Content-Type": "application/json"})
+r = json.load(urllib.request.urlopen(req, timeout=900))
+print("prompt_tokens:", r["usage"]["prompt_tokens"], "| answer:", r["choices"][0]["message"]["content"].strip())
+EOF
+```
+
+Expected: `prompt_tokens: 55547 | answer: AMBER-FALCON-3058` (verified on
+2026-10-28). Garbage instead of the code means YaRN is not active: do not run
+the agent on this server.
 
 ### 6. Start the read-only Docker API proxy
 
@@ -214,9 +299,12 @@ checked `local-vllm`.
 ### 9. Run the assessment
 
 ```bash
-uv run docker-audit assess --model local-vllm --range-baseline clean-v1
+caffeinate -i uv run docker-audit assess --model local-vllm --range-baseline clean-v1
 ```
 
+- `caffeinate -i` keeps the Mac from sleeping while the command runs. Sleep
+  drops the SSH tunnel and the run fails with `APIConnectionError`. It does not
+  prevent sleep when the lid is closed: keep the lid open.
 - `--model local-vllm` uses Qwen3-32B on the VM through the tunnel.
 - `--range-baseline clean-v1` makes the run abort if the lab differs from the
   baseline, and records the baseline in the run's manifest. Always pass it for
@@ -341,7 +429,8 @@ baseline check or stop being comparable:
   `bloodhound_*` volumes: the baseline fingerprint covers all of them.
 - Do not start other labs (`ics_range`, BloodHound) on this Docker engine.
 - Keep the same model, `vllm serve` flags and `--max-model-len` for every run
-  you will compare. Changing them changes the model's behaviour.
+  you will compare. Changing them changes the model's behaviour. The 32k and the
+  131k (YaRN) server report the same model name, so note which one each run used.
 
 ## Running the agent in a container instead
 
@@ -374,6 +463,10 @@ difference. Reports still land in `outputs/` and `data/` on the Mac.
 | `vLLM rejected the API key` | `VLLM_API_KEY` in `.env` differs from `--api-key` on `vllm serve` |
 | `Model 'Qwen/Qwen3-32B' is not served` | `VLLM_MODEL` in `.env` differs from the name given to `vllm serve` |
 | Tool-call probe fails | `vllm serve` was started without `--enable-auto-tool-choice --tool-call-parser hermes` |
+| `vllm: error: unrecognized arguments: --rope-scaling ...` | That flag was removed in recent vLLM. Use the YaRN model folder (one-time setup E) and serve it as in step 2 |
+| `vllm serve` fails: `max_model_len (131072) is greater than the derived max_model_len (40960...)` | You served `Qwen/Qwen3-32B` directly. Serve `~/models/Qwen3-32B-yarn` (step 2). Do not use `VLLM_ALLOW_LONG_MAX_MODEL_LEN=1`: it removes the check without turning YaRN on |
+| Step 5 shows `max_model_len 32768`, or a run fails with `maximum context length is 32768 tokens` | The server was started the old way. Restart it as in step 2 |
+| Agent fails with `APIConnectionError: Connection error.` and 0 model requests | The Mac slept or the tunnel dropped. Reopen the tunnel (step 3); run with `caffeinate -i` and the lid open (step 9) |
 | `vllm serve` fails with `CUDA out of memory` | Add `--gpu-memory-utilization 0.85`, or check `nvidia-smi` for another process using the GPUs |
 | `vllm serve` fails because fewer than 4 GPUs are visible | Check `nvidia-smi`; ask the lab admin, or lower `--tensor-parallel-size` to the number of GPUs |
 | `python3 -m venv` fails on the VM | The venv package is missing; ask the lab admin to install `python3-venv` |
