@@ -70,3 +70,14 @@ def test_api_key_comes_from_env_only(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-real")
     assert profile.api_key() == "sk-test-not-real"
     assert "sk-test" not in str(profile.public_dict())
+
+
+def test_nmap_limits_load_and_default():
+    from docker_security_agent.config import AgentConfig
+
+    s = load_settings()
+    assert s.agent.nmap_limits.max_turns == 20
+    assert s.agent.nmap_limits.max_tool_calls == 30
+    assert s.agent.limits.max_tool_calls == 100  # Docker agent limits untouched
+    # Removing the YAML key falls back to the same defaults.
+    assert AgentConfig().nmap_limits == s.agent.nmap_limits

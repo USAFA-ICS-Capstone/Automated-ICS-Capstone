@@ -612,3 +612,146 @@ async def test_range_baseline_errors_early(pipeline_env):
         await run_assessment(
             settings, AssessOptions(use_agent=False, snapshot_id="x", range_baseline="nope")
         )
+
+
+# ---------------------------------------------------------------------------
+# Nmap phase (NmapNetworkAgent after the Docker agent)
+# ---------------------------------------------------------------------------
+
+
+def _nmap_final_json() -> str:
+    return json.dumps(
+        {
+            "executive_summary": "Modbus exposed on the simulation container.",
+            "overall_risk": "high",
+            "hosts_assessed": ["192.168.95.45"],
+            "exposed_ics_services": [],
+            "findings": [],
+            "attack_surface_summary": "One ICS host scanned.",
+            "recommendations": ["Firewall port 502."],
+            "limitations": ["Scripted model"],
+        }
+    )
+
+
+@pytest.fixture
+def pipeline_env_with_nmap(pipeline_env, tmp_path):
+    """pipeline_env plus the nmap MCP server pointed at the fake nmap script."""
+    import sys
+    from pathlib import Path
+
+    settings, holder = pipeline_env
+    cfg = settings.mcp.servers["nmap"]
+    cfg.enabled = True
+    cfg.command = sys.executable
+    cfg.args = [str(Path(__file__).parent.parent / "fixtures" / "fake_nmap_mcp_server.py")]
+    cfg.env = {**cfg.env, "FAKE_NMAP_CALL_LOG": str(tmp_path / "nmap_calls.jsonl")}
+    cfg.client_session_timeout_seconds = 30
+    return settings, holder
+
+
+async def test_nmap_phase_runs_after_docker_agent(pipeline_env_with_nmap):
+    settings, holder = pipeline_env_with_nmap
+    model = ScriptedModel(
+        [
+            # Docker agent
+            [function_call("container_inspect", {"id_or_name": "simulation"}, call_id="d1")],
+            [assistant_message(_final_json(SOCKET, ROUTER_CAPS))],
+            # Nmap agent
+            [function_call("do-nmap", {"target": "192.168.95.45"}, call_id="n1")],
+            [assistant_message(_nmap_final_json())],
+        ]
+    )
+    holder["model"] = model
+
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+
+    # Both agents produced output; the nmap outcome is on the result.
+    assert result.agent_report.agent_status == "ok"
+    assert result.nmap_outcome is not None and result.nmap_outcome.status == "ok"
+    assert result.nmap_outcome.assessment.hosts_assessed == ["192.168.95.45"]
+    assert result.status == "completed"
+
+    # The Docker agent is never offered do-nmap; the nmap agent only gets do-nmap.
+    docker_tools = {t.name for t in model.calls[0].tools}
+    nmap_tools = {t.name for t in model.calls[2].tools}
+    assert "do-nmap" not in docker_tools and "container_inspect" in docker_tools
+    assert nmap_tools == {"do-nmap"}
+
+    # The nmap agent's input is built from the snapshot + the Docker findings.
+    nmap_input = str(model.calls[2].input)
+    assert "PRIORITY TARGETS" in nmap_input
+    assert "simulation" in nmap_input and "Docker socket mounted" in nmap_input
+    assert "192.168.95.45" in nmap_input
+
+    # Separate budgets: Docker metrics count only Docker agent calls, but every
+    # call (both agents) is persisted.
+    assert result.report.metrics.tool_calls_agent == 1
+    repo = AssessmentRepository(settings.assessment_db_path)
+    try:
+        rows = repo.conn.execute(
+            "SELECT server, tool, status FROM tool_calls WHERE run_id = ? AND phase = 'agent'",
+            (result.run_id,),
+        ).fetchall()
+    finally:
+        repo.close()
+    assert ("nmap", "do-nmap", "ok") in [tuple(r) for r in rows]
+
+
+async def test_nmap_failure_marks_run_completed_with_errors(pipeline_env_with_nmap):
+    settings, holder = pipeline_env_with_nmap
+    holder["model"] = ScriptedModel(
+        [
+            [assistant_message(_final_json(SOCKET))],  # Docker agent
+            [assistant_message("not json")],  # Nmap agent
+        ]
+    )
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+    assert result.agent_report.agent_status == "ok"
+    assert result.nmap_outcome.status == "invalid_output"
+    assert result.status == "completed_with_errors"
+    assert any(e.startswith("nmap: ") for e in result.report.errors)
+
+
+async def test_nmap_phase_skipped_when_server_disabled(pipeline_env):
+    settings, holder = pipeline_env  # conftest disables the nmap server
+    holder["model"] = ScriptedModel([[assistant_message(_final_json(SOCKET))]])
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+    assert result.nmap_outcome is None
+    assert result.status == "completed"
+
+
+async def test_nmap_phase_uses_its_own_limits(pipeline_env_with_nmap):
+    settings, holder = pipeline_env_with_nmap
+    settings.agent.limits.max_tool_calls = 50
+    settings.agent.nmap_limits.max_tool_calls = 1
+    settings.agent.nmap_limits.max_turns = 3
+    holder["model"] = ScriptedModel(
+        [
+            # Docker agent: two calls, well within its own budget of 50
+            [function_call("container_list", {}, call_id="d1")],
+            [function_call("container_inspect", {"id_or_name": "simulation"}, call_id="d2")],
+            [assistant_message(_final_json(SOCKET))],
+            # Nmap agent: budget 1, max_turns 3
+            [function_call("do-nmap", {"target": "192.168.95.45"}, call_id="n1")],
+            [function_call("do-nmap", {"target": "192.168.95.2"}, call_id="n2")],
+            [function_call("do-nmap", {"target": "192.168.95.5"}, call_id="n3")],
+        ]
+    )
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+
+    assert result.agent_report.agent_status == "ok"
+    assert result.nmap_outcome.status == "max_turns"  # nmap_limits.max_turns, not 60
+    repo = AssessmentRepository(settings.assessment_db_path)
+    try:
+        rows = repo.conn.execute(
+            "SELECT server, status FROM tool_calls WHERE run_id = ? AND phase = 'agent' "
+            "ORDER BY id",
+            (result.run_id,),
+        ).fetchall()
+    finally:
+        repo.close()
+    docker = [r[1] for r in rows if r[0] == "docker"]
+    nmap = [r[1] for r in rows if r[0] == "nmap"]
+    assert docker == ["ok", "ok"]
+    assert nmap[0] == "ok" and set(nmap[1:]) == {"budget_exhausted"}

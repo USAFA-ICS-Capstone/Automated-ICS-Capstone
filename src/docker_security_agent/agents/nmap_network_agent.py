@@ -7,9 +7,11 @@ the ``gc-nmap-mcp`` MCP server (``do-nmap`` tool). Unlike ``NetworkAssessmentAge
 (which pre-collects evidence with a subprocess), this agent drives nmap *live*
 through MCP during its reasoning loop — one ``do-nmap`` call per scan target.
 
-The agent is intentionally **standalone**: it does not depend on a Docker
-inventory snapshot or on the main assessment pipeline. It can be run against
-any target (IP, CIDR, hostname) from the CLI or imported into other workflows.
+The agent can run **standalone** against any target (IP, CIDR, hostname) from
+the CLI (``build_nmap_input``), or as a phase of the main assessment pipeline
+after the Docker agent (``build_nmap_input_from_docker_context``): targets then
+come from the inventory snapshot, and containers the Docker agent flagged with
+critical/high findings are prioritised.
 
 Architecture
 ------------
@@ -40,9 +42,12 @@ Or from code, with ``active_servers`` connected to the ``nmap`` MCP server (the
 from __future__ import annotations
 
 import asyncio
+import fnmatch
+import ipaddress
 import json
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,7 +57,9 @@ from agents.exceptions import AgentsException, MaxTurnsExceeded
 from docker_security_agent import PROMPT_VERSION
 from docker_security_agent.llm.factory import ModelBundle
 from docker_security_agent.mcp.servers import GuardedMCPServer
+from docker_security_agent.schemas.assets import ContainerAsset, InventorySnapshot
 from docker_security_agent.schemas.nmap_network import NmapNetworkAssessment
+from docker_security_agent.schemas.reports import AgentAssessment, AgentFinding
 
 AGENT_NAME = "NmapNetworkAgent"
 
@@ -215,6 +222,169 @@ def build_nmap_input(targets: list[str], objective: str = "") -> str:
         lines.append(f"  - {t}")
     lines += [
         "",
+        "Use do-nmap with ICS-safe flags as described in your instructions.",
+        "Scan each target, perform protocol-specific follow-up scans on any ICS ports found,",
+        "then produce the final NmapNetworkAssessment.",
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Input built from the Docker assessment (pipeline integration)
+# ---------------------------------------------------------------------------
+
+HIGHLIGHT_SEVERITIES = ("critical", "high")
+_MAX_TITLE_CHARS = 160
+_MAX_FINDINGS_PER_CONTAINER = 5
+
+
+def _in_scope(container: ContainerAsset, ignored: Iterable[str]) -> bool:
+    return container.running and not any(
+        fnmatch.fnmatchcase(container.name, p) for p in ignored
+    )
+
+
+def _ip_key(ip: str) -> tuple[int, int | str]:
+    """Sort IPs numerically; anything unparsable sorts last, by text."""
+    try:
+        return (0, int(ipaddress.ip_address(ip)))
+    except ValueError:
+        return (1, ip)
+
+
+def docker_scan_targets(
+    snapshot: InventorySnapshot, ignored_containers: Iterable[str] = ()
+) -> list[str]:
+    """Container IPs to scan: every running, in-scope container's network IPs.
+
+    Individual IPs (not network subnets) keep the scan to known inventory and
+    avoid Docker's default /16 bridge, which the agent is told never to scan.
+    """
+    ignored = list(ignored_containers)
+    ips = {
+        ip
+        for c in snapshot.containers
+        if _in_scope(c, ignored)
+        for ip in c.ip_addresses.values()
+        if ip
+    }
+    return sorted(ips, key=_ip_key)
+
+
+def build_nmap_input_from_docker_context(
+    snapshot: InventorySnapshot,
+    assessment: AgentAssessment | None,
+    *,
+    ignored_containers: Iterable[str] = (),
+    objective: str = "",
+) -> str:
+    """The first user message when NmapNetworkAgent runs after the Docker agent.
+
+    Targets come from the inventory snapshot (see ``docker_scan_targets``).
+    Containers the Docker agent reported with critical/high findings are
+    highlighted so the nmap agent scans them first and in more depth. The
+    Docker findings are context only: the nmap agent must still ground every
+    finding in its own do-nmap output. ``assessment`` may be None (the Docker
+    agent failed); the input is then built from the snapshot alone.
+    """
+    ignored = list(ignored_containers)
+    in_scope = sorted(
+        (c for c in snapshot.containers if _in_scope(c, ignored)), key=lambda c: c.name
+    )
+    targets = docker_scan_targets(snapshot, ignored)
+    ip_owner = {ip: (c.name, net) for c in in_scope for net, ip in c.ip_addresses.items() if ip}
+
+    # Docker agent findings on containers, grouped by container name.
+    by_container: dict[str, list[AgentFinding]] = {}
+    if assessment is not None:
+        for f in assessment.findings:
+            c = snapshot.container_by_name(f.resource_name)
+            if c is not None and _in_scope(c, ignored) and f.severity in HIGHLIGHT_SEVERITIES:
+                by_container.setdefault(c.name, []).append(f)
+    highlighted = [c for c in in_scope if c.name in by_container]
+
+    obj = objective.strip() or (
+        "Perform an ICS-aware network reconnaissance of the Docker-hosted ICS range below. "
+        "Identify open ports and services on every target, with a focus on exposed ICS "
+        "protocols. Correlate what you observe with the Docker context provided, assess "
+        "the risk and provide concrete recommendations."
+    )
+    lines = [f"OBJECTIVE: {obj}", ""]
+
+    lines.append(f"TARGETS ({len(targets)}):")
+    for ip in targets:
+        name, net = ip_owner.get(ip, ("?", "?"))
+        lines.append(f"  - {ip}  (container {name}, network {net})")
+    lines.append("")
+
+    if highlighted:
+        lines.append(
+            "PRIORITY TARGETS - the Docker configuration assessment reported "
+            "critical/high findings on these containers. Scan them first and run the "
+            "ICS NSE follow-up on any ICS port you find open:"
+        )
+        for c in highlighted:
+            ips = ", ".join(sorted(c.ip_addresses.values(), key=_ip_key)) or "no IP"
+            lines.append(f"  * {c.name} ({ips})")
+            findings = sorted(
+                by_container[c.name], key=lambda f: HIGHLIGHT_SEVERITIES.index(f.severity)
+            )
+            for f in findings[:_MAX_FINDINGS_PER_CONTAINER]:
+                lines.append(f"      - [{f.severity.upper()}] {f.title[:_MAX_TITLE_CHARS]}")
+            if len(findings) > _MAX_FINDINGS_PER_CONTAINER:
+                lines.append(f"      - ... and {len(findings) - _MAX_FINDINGS_PER_CONTAINER} more")
+        lines.append("")
+    elif assessment is None:
+        lines += [
+            "NOTE: the Docker configuration assessment did not produce results for this "
+            "run, so no containers are prioritised. Scan every target.",
+            "",
+        ]
+
+    # Context: networks the targets live on, and ports Docker says containers use.
+    nets = {net for c in in_scope for net in c.ip_addresses}
+    net_lines = [
+        f"  - {n.name}: {', '.join(n.subnets)}" + (" (internal)" if n.internal else "")
+        for n in sorted(snapshot.networks, key=lambda n: n.name)
+        if n.name in nets and n.subnets
+    ]
+    if net_lines:
+        lines += ["DOCKER NETWORKS (context only - scan the target IPs, not these subnets):"]
+        lines += net_lines + [""]
+
+    known = {p for p, _ in ICS_PORTS} | {p for p, _ in IT_PORTS}
+    extra_ports = sorted(
+        {
+            p.container_port
+            for c in in_scope
+            for p in c.ports
+            if p.protocol == "tcp" and p.container_port.isdigit() and p.container_port not in known
+        },
+        key=int,
+    )
+    published = [
+        f"  - {c.name}: "
+        + ", ".join(
+            f"{p.container_port}/{p.protocol} -> host "
+            f"{'all interfaces' if p.all_interfaces else p.host_ip}:{p.host_port}"
+            for p in c.ports
+        )
+        for c in in_scope
+        if c.ports
+    ]
+    if published:
+        lines += ["PORTS PUBLISHED TO THE DOCKER HOST (from docker inspect):"]
+        lines += published + [""]
+    if extra_ports:
+        lines += [
+            "ADDITIONAL PORTS: you may extend the TCP port list with these container ports "
+            f"seen in Docker: {','.join(extra_ports)}",
+            "",
+        ]
+
+    lines += [
+        "The Docker context above is background only. Every finding you report must be",
+        "grounded in do-nmap output you received; do not copy Docker findings as your own.",
         "Use do-nmap with ICS-safe flags as described in your instructions.",
         "Scan each target, perform protocol-specific follow-up scans on any ICS ports found,",
         "then produce the final NmapNetworkAssessment.",

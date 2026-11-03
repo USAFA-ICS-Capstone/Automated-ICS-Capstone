@@ -114,6 +114,12 @@ class SessionConfig(BaseModel):
 class AgentConfig(BaseModel):
     name: str = "DockerSecurityAssessmentAgent"
     limits: AgentLimits = Field(default_factory=AgentLimits)
+    # NmapNetworkAgent (pipeline step 3b); same defaults as config/agent.yaml.
+    nmap_limits: AgentLimits = Field(
+        default_factory=lambda: AgentLimits(
+            max_turns=20, max_tool_calls=30, max_duration_seconds=600
+        )
+    )
     session: SessionConfig = Field(default_factory=SessionConfig)
     tracing_enabled: bool = False
 

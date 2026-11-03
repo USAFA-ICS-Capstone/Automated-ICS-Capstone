@@ -18,6 +18,10 @@ bottom gives the whole workflow:
     3. agent          run DockerSecurityAssessmentAgent with the MCP tools
                       ONLY. It never sees step 2's results: it discovers the
                       environment itself and reports its own findings
+    3b. nmap          run NmapNetworkAgent (do-nmap via the network_scanner MCP
+                      server, if enabled) against the in-scope container IPs,
+                      prioritising containers the Docker agent flagged
+                      critical/high. Own tool budget; result in nmap_outcome
     4. validate       check the agent's findings against step 2's evidence
     5. compare        agent findings vs deterministic findings (answer key):
                       found / missed / outside the rules / rejected + scores
@@ -54,6 +58,13 @@ from pathlib import Path
 from agents import set_tracing_disabled
 
 from docker_security_agent import PROMPT_VERSION
+from docker_security_agent.agents.nmap_network_agent import (
+    NmapAgentRunOutcome,
+    build_nmap_agent,
+    build_nmap_input_from_docker_context,
+    docker_scan_targets,
+    run_nmap_agent,
+)
 from docker_security_agent.agents.security_assessment import (
     AgentRunOutcome,
     build_agent,
@@ -162,6 +173,7 @@ class AssessResult:
     agent_md_path: Path | None = None
     comparison: Comparison | None = None
     comparison_md_path: Path | None = None
+    nmap_outcome: NmapAgentRunOutcome | None = None
 
 
 def new_run_id() -> str:
@@ -377,6 +389,9 @@ async def run_assessment(settings: Settings, opts: AssessOptions) -> AssessResul
     started_at = datetime.now(UTC)
     t_start = time.perf_counter()
     recorder = ToolCallRecorder(settings.agent.limits.max_tool_calls)
+    # Separate budget so the nmap agent neither eats into nor is starved by the
+    # Docker agent's, and the Docker agent's metrics stay comparable across runs.
+    nmap_recorder = ToolCallRecorder(settings.agent.nmap_limits.max_tool_calls)
     policy = ToolPolicy(settings.mcp)
     redactor = Redactor(settings.mcp.redaction)
     metrics = RunMetrics(started_at=started_at)
@@ -445,13 +460,15 @@ async def run_assessment(settings: Settings, opts: AssessOptions) -> AssessResul
             snapshot, scans, findings, outcome = await _replay_phase(
                 settings, opts, repo, run_id, freeze_manifest
             )
+            nmap_outcome = None
         else:
-            snapshot, scans, findings, outcome, server_infos = await _live_phase(
+            snapshot, scans, findings, outcome, nmap_outcome, server_infos = await _live_phase(
                 settings,
                 opts,
                 repo,
                 bundle,
                 recorder,
+                nmap_recorder,
                 policy,
                 redactor,
                 objective,
@@ -483,13 +500,15 @@ async def run_assessment(settings: Settings, opts: AssessOptions) -> AssessResul
             metrics.output_tokens = outcome.usage.get("output_tokens")
             metrics.total_tokens = outcome.usage.get("total_tokens")
             metrics.agent_seconds = outcome.duration_seconds
+        if nmap_outcome is not None and nmap_outcome.error:
+            errors.append(f"nmap: {nmap_outcome.error}")
 
         # 6. persist findings + tool calls + metrics
         all_findings = list(findings)
         if validation:
             all_findings += validation.findings + validation.rejected + validation.out_of_scope
         repo.save_findings(run_id, all_findings)
-        repo.save_tool_calls(run_id, recorder.records)
+        repo.save_tool_calls(run_id, recorder.records + nmap_recorder.records)
 
         metrics.finished_at = datetime.now(UTC)
         metrics.duration_seconds = round(time.perf_counter() - t_start, 2)
@@ -500,8 +519,11 @@ async def run_assessment(settings: Settings, opts: AssessOptions) -> AssessResul
         metrics.redactions = recorder.total_redactions()
 
         agent_failed = outcome is not None and outcome.status != "ok"
+        nmap_failed = nmap_outcome is not None and nmap_outcome.status != "ok"
         status = (
-            "completed_with_errors" if (agent_failed or snapshot.collection_errors) else "completed"
+            "completed_with_errors"
+            if (agent_failed or nmap_failed or snapshot.collection_errors)
+            else "completed"
         )
         model_info = (
             ModelInfo(
@@ -534,6 +556,7 @@ async def run_assessment(settings: Settings, opts: AssessOptions) -> AssessResul
         md_path = write_report(report, settings.output_dir)
         repo.save_report(run_id, report)
         result = AssessResult(run_id, status, report, md_path, frozen.path)
+        result.nmap_outcome = nmap_outcome
 
         # 5 + 7b. agent report and comparison (agent runs only)
         if outcome is not None and model_info is not None:
@@ -574,7 +597,7 @@ async def run_assessment(settings: Settings, opts: AssessOptions) -> AssessResul
         return result
     except BaseException as exc:
         # Leave an honest trail in SQLite, then re-raise for the CLI to show.
-        repo.save_tool_calls(run_id, recorder.records)
+        repo.save_tool_calls(run_id, recorder.records + nmap_recorder.records)
         repo.update_run(
             run_id,
             finished_at=datetime.now(UTC).isoformat(),
@@ -597,6 +620,7 @@ async def _live_phase(
     repo,
     bundle,
     recorder,
+    nmap_recorder,
     policy,
     redactor,
     objective,
@@ -610,6 +634,15 @@ async def _live_phase(
 ):
     roles = {"docker_inspection"} | ({"image_scanner"} if scanning or bundle else set())
     servers = build_servers(settings, policy, redactor, recorder, roles=roles)
+    # The nmap agent (agent runs only) gets its own recorder, i.e. its own budget,
+    # and its own result-size limit (agent.nmap_limits).
+    if bundle is not None:
+        nmap_servers = build_servers(
+            settings, policy, redactor, nmap_recorder, roles={"network_scanner"}
+        )
+        for s in nmap_servers:
+            s.max_result_chars = settings.agent.nmap_limits.max_tool_result_chars
+        servers += nmap_servers
     _say(opts, "Starting MCP servers: " + ", ".join(s.name for s in servers))
 
     async with connect(servers) as manager:
@@ -692,13 +725,30 @@ async def _live_phase(
 
         freeze_manifest(snapshot.snapshot_id, scan_ids)
 
-        # 3. agent (MCP servers still connected; it gets nothing from step 2)
+        # 3. agent (MCP servers still connected; it gets nothing from step 2).
+        # It never sees the nmap server: do-nmap belongs to the nmap agent only.
         outcome = None
+        nmap_outcome = None
         if bundle is not None:
+            docker_tools = [s for s in active if s.config.role != "network_scanner"]
             outcome = await _agent_phase(
-                settings, opts, bundle, recorder, active, snapshot, objective, run_id, session_id
+                settings,
+                opts,
+                bundle,
+                recorder,
+                docker_tools,
+                snapshot,
+                objective,
+                run_id,
+                session_id,
             )
-    return snapshot, scans, findings, outcome, infos
+            # 3b. nmap agent, informed by the Docker agent's findings
+            nmap = by_role.get("network_scanner")
+            if nmap is not None:
+                nmap_outcome = await _nmap_phase(
+                    settings, opts, bundle, nmap_recorder, [nmap], snapshot, outcome, run_id
+                )
+    return snapshot, scans, findings, outcome, nmap_outcome, infos
 
 
 def _image_refs(snapshot: InventorySnapshot, image_ids: set[str]) -> set[str]:
@@ -784,6 +834,56 @@ async def _agent_phase(
     _say(
         opts,
         f"Agent finished: {outcome.status} in {outcome.duration_seconds}s "
+        f"({recorder.agent_calls} tool calls)",
+    )
+    return outcome
+
+
+# ---------------------------------------------------------------------------
+# Nmap phase
+# ---------------------------------------------------------------------------
+
+
+async def _nmap_phase(
+    settings: Settings,
+    opts: AssessOptions,
+    bundle: ModelBundle,
+    recorder: ToolCallRecorder,
+    mcp_servers: list[GuardedMCPServer],
+    snapshot: InventorySnapshot,
+    docker_outcome: AgentRunOutcome | None,
+    run_id: str,
+) -> NmapAgentRunOutcome | None:
+    """Run NmapNetworkAgent against the in-scope container IPs.
+
+    Runs even if the Docker agent failed (targets come from the snapshot; there
+    is just nothing to prioritise). Returns None when there is nothing to scan.
+    """
+    ignored = settings.rules.ignore_containers
+    targets = docker_scan_targets(snapshot, ignored)
+    if not targets:
+        _say(opts, "Skipping NmapNetworkAgent: no running in-scope containers with an IP")
+        return None
+    assessment = docker_outcome.assessment if docker_outcome is not None else None
+    agent = build_nmap_agent(bundle, mcp_servers=mcp_servers)
+    limits = settings.agent.nmap_limits
+    _say(
+        opts,
+        f"Running {agent.name} with {bundle.profile.name} against {len(targets)} container "
+        f"IP(s) (max {limits.max_turns} turns, {recorder.max_agent_calls} tool calls, "
+        f"{limits.max_duration_seconds:.0f}s)...",
+    )
+    outcome = await run_nmap_agent(
+        agent,
+        build_nmap_input_from_docker_context(snapshot, assessment, ignored_containers=ignored),
+        max_turns=limits.max_turns,
+        timeout_seconds=limits.max_duration_seconds,
+        run_id=run_id,
+        tracing_enabled=settings.agent.tracing_enabled,
+    )
+    _say(
+        opts,
+        f"Nmap agent finished: {outcome.status} in {outcome.duration_seconds}s "
         f"({recorder.agent_calls} tool calls)",
     )
     return outcome

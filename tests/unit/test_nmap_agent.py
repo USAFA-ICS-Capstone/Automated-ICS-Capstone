@@ -25,6 +25,8 @@ from docker_security_agent.agents.nmap_network_agent import (
     _usage_of,
     build_nmap_agent,
     build_nmap_input,
+    build_nmap_input_from_docker_context,
+    docker_scan_targets,
 )
 from docker_security_agent.config import ModelProfile
 from docker_security_agent.llm.factory import ModelBundle
@@ -391,3 +393,127 @@ class TestNmapSchemaHelpers:
                 recommended_action="test",
             )
             assert svc.risk_level == level
+
+
+# ---------------------------------------------------------------------------
+# build_nmap_input_from_docker_context / docker_scan_targets
+# ---------------------------------------------------------------------------
+
+
+def _docker_finding(resource: str, title: str, severity: str) -> dict:
+    return {
+        "title": title,
+        "resource_name": resource,
+        "severity": severity,
+        "evidence": [],
+        "vulnerability_ids": [],
+        "explanation": "x",
+        "remediation": "y",
+    }
+
+
+def _docker_assessment(*findings):
+    from docker_security_agent.schemas.reports import AgentAssessment
+
+    return AgentAssessment(
+        executive_summary="x",
+        overall_risk="critical",
+        findings=list(findings),
+        recommendations=[],
+        limitations=[],
+    )
+
+
+def _section(text: str, header: str) -> str:
+    """The lines of one input section, up to the next blank line."""
+    start = text.index(header)
+    end = text.find("\n\n", start)
+    return text[start : end if end != -1 else None]
+
+
+class TestDockerContextInput:
+    def test_targets_are_running_in_scope_container_ips(self, snapshot, settings):
+        targets = docker_scan_targets(snapshot, settings.rules.ignore_containers)
+        running = {
+            ip
+            for c in snapshot.containers
+            if c.running
+            for ip in c.ip_addresses.values()
+        }
+        assert set(targets) == running
+        assert "172.17.0.9" not in targets  # bad-debug is exited
+        # numeric, not lexical, order: .2 before .45 before .200
+        ics = [t for t in targets if t.startswith("192.168.95.")]
+        assert ics == sorted(ics, key=lambda ip: int(ip.rsplit(".", 1)[1]))
+
+    def test_ignored_containers_are_not_targets(self, snapshot):
+        plc_ips = set(snapshot.container_by_name("plc").ip_addresses.values())
+        targets = docker_scan_targets(snapshot, ["pl*"])
+        assert plc_ips and not plc_ips & set(targets)
+
+    def test_subnets_are_context_not_targets(self, snapshot, settings):
+        text = build_nmap_input_from_docker_context(
+            snapshot, None, ignored_containers=settings.rules.ignore_containers
+        )
+        targets = _section(text, "TARGETS")
+        assert "/24" not in targets and "/16" not in targets
+        assert "b-ics-net: 192.168.95.0/24" in _section(text, "DOCKER NETWORKS")
+        # the default bridge (/16) only holds the exited container -> not listed
+        assert "172.17.0.0/16" not in text
+
+    def test_high_severity_containers_are_prioritised(self, snapshot, settings):
+        assessment = _docker_assessment(
+            _docker_finding("simulation", "Docker socket mounted", "critical"),
+            _docker_finding("router", "NET_ADMIN capability", "high"),
+            _docker_finding("plc", "Runs as root", "medium"),
+            _docker_finding("bad-debug", "Privileged", "critical"),  # exited
+            _docker_finding("ghost", "Invented container", "high"),  # not in inventory
+        )
+        text = build_nmap_input_from_docker_context(
+            snapshot, assessment, ignored_containers=settings.rules.ignore_containers
+        )
+        priority = _section(text, "PRIORITY TARGETS")
+        assert "* simulation (172.30.0.2, 192.168.95.45)" in priority
+        assert "[CRITICAL] Docker socket mounted" in priority
+        assert "* router" in priority and "[HIGH] NET_ADMIN capability" in priority
+        for absent in ("plc", "bad-debug", "ghost", "Runs as root"):
+            assert absent not in priority
+
+    def test_findings_sorted_and_capped_per_container(self, snapshot, settings):
+        findings = [_docker_finding("simulation", f"high-{i}", "high") for i in range(6)]
+        findings.append(_docker_finding("simulation", "the-critical-one", "critical"))
+        text = build_nmap_input_from_docker_context(
+            snapshot,
+            _docker_assessment(*findings),
+            ignored_containers=settings.rules.ignore_containers,
+        )
+        priority = _section(text, "PRIORITY TARGETS")
+        bullets = [ln for ln in priority.splitlines() if ln.startswith("      - ")]
+        assert bullets[0].endswith("[CRITICAL] the-critical-one")
+        assert len(bullets) == 6 and bullets[-1].endswith("... and 2 more")
+
+    def test_no_assessment_still_lists_all_targets(self, snapshot, settings):
+        text = build_nmap_input_from_docker_context(
+            snapshot, None, ignored_containers=settings.rules.ignore_containers
+        )
+        assert "PRIORITY TARGETS" not in text
+        assert "did not produce results" in text
+        ignored = settings.rules.ignore_containers
+        assert f"TARGETS ({len(docker_scan_targets(snapshot, ignored))})" in text
+
+    def test_published_and_extra_ports(self, snapshot, settings):
+        text = build_nmap_input_from_docker_context(
+            snapshot, None, ignored_containers=settings.rules.ignore_containers
+        )
+        published = _section(text, "PORTS PUBLISHED")
+        assert "hardened: 8443/tcp -> host 127.0.0.1:8443" in published
+        assert "simulation: 80/tcp -> host all interfaces:80" in published
+        extra = _section(text, "ADDITIONAL PORTS")
+        # only TCP container ports not already in the ICS/IT lists
+        assert "6080" in extra and "8888" in extra
+        assert "8080" not in extra and "51820" not in extra  # known / UDP
+
+    def test_docker_findings_marked_as_context_only(self, snapshot):
+        text = build_nmap_input_from_docker_context(snapshot, _docker_assessment())
+        assert "grounded in do-nmap output" in text
+        assert "do not copy Docker findings" in text

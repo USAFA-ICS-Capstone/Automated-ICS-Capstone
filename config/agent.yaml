@@ -14,6 +14,15 @@ limits:
   max_tool_result_chars: 12000  # tool results longer than this are truncated
                                 # before they reach the model
 
+# Separate limits for NmapNetworkAgent (pipeline step 3b), which runs after the
+# Docker agent with its own tool-call budget. Its job is short and targeted
+# (scan the container IPs -> ICS follow-ups -> report), so it gets less room.
+nmap_limits:
+  max_turns: 20
+  max_tool_calls: 30
+  max_duration_seconds: 600
+  max_tool_result_chars: 12000
+
 # Conversation memory (OpenAI Agents SDK SQLiteSession). By default every
 # run gets a fresh session (session id = run id). Pass `--session NAME` to
 # `assess` to continue a named conversation across executions.
