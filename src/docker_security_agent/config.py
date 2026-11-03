@@ -114,6 +114,12 @@ class SessionConfig(BaseModel):
 class AgentConfig(BaseModel):
     name: str = "DockerSecurityAssessmentAgent"
     limits: AgentLimits = Field(default_factory=AgentLimits)
+    # NmapNetworkAgent (pipeline step 3b); same defaults as config/agent.yaml.
+    nmap_limits: AgentLimits = Field(
+        default_factory=lambda: AgentLimits(
+            max_turns=20, max_tool_calls=30, max_duration_seconds=600
+        )
+    )
     session: SessionConfig = Field(default_factory=SessionConfig)
     tracing_enabled: bool = False
 
@@ -137,7 +143,7 @@ class MCPServerConfig(BaseModel):
 
     name: str = ""  # filled in from the YAML key
     enabled: bool = True
-    role: Literal["docker_inspection", "image_scanner"]
+    role: Literal["docker_inspection", "image_scanner", "network_scanner"]
     command: str
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -274,7 +280,7 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise ConfigError(f"Missing configuration file: {path}")
     try:
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except yaml.YAMLError as exc:
         raise ConfigError(f"Invalid YAML in {path}: {exc}") from exc
     if not isinstance(data, dict):

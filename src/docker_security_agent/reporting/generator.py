@@ -565,9 +565,9 @@ def write_files(output_dir: Path, run_id: str, stem: str, json_text: str, md: st
     """Write outputs/<run_id>/<stem>.json and <stem>.md; return the .md path."""
     run_dir = output_dir / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / f"{stem}.json").write_text(json_text)
+    (run_dir / f"{stem}.json").write_text(json_text, encoding="utf-8")
     md_path = run_dir / f"{stem}.md"
-    md_path.write_text(md)
+    md_path.write_text(md, encoding="utf-8")
     return md_path
 
 

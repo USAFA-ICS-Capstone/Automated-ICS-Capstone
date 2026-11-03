@@ -221,11 +221,11 @@ def test_markdown_has_all_sections_and_files_are_written(snapshot, settings, sca
     md_path = write_report(report, tmp_path)
     json_path = md_path.with_suffix(".json")
     assert md_path.name == "deterministic_report.md"
-    assert Report.model_validate_json(json_path.read_text()).run_id == "run-x"
-    assert md_path.read_text() == md
+    assert Report.model_validate_json(json_path.read_text(encoding="utf-8")).run_id == "run-x"
+    assert md_path.read_text(encoding="utf-8") == md
     # No secret values anywhere in the outputs.
     for secret in ("Sup3rS3cret!", "some-long-secret-you-generate", "hunter2"):
-        assert secret not in json_path.read_text() and secret not in md
+        assert secret not in json_path.read_text(encoding="utf-8") and secret not in md
 
 
 def test_agent_report_and_comparison_files(snapshot, settings, scans, tmp_path, repo):
@@ -247,8 +247,8 @@ def test_agent_report_and_comparison_files(snapshot, settings, scans, tmp_path, 
     a_path = write_agent_report(agent_report, [], tmp_path)
     c_path = write_comparison(comparison, tmp_path)
     assert (a_path.name, c_path.name) == ("agent_report.md", "comparison.md")
-    assert AgentReport.model_validate_json(a_path.with_suffix(".json").read_text())
-    assert Comparison.model_validate_json(c_path.with_suffix(".json").read_text())
+    assert AgentReport.model_validate_json(a_path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert Comparison.model_validate_json(c_path.with_suffix(".json").read_text(encoding="utf-8"))
 
     # stored and reloaded from SQLite
     _create(repo, "run-x")

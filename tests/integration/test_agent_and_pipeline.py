@@ -239,7 +239,7 @@ async def test_full_live_pipeline_with_fakes(pipeline_env):
     assert c.scores.deterministic_total == len(r.findings)
     assert c.scores.agent_rejected == 1 and c.scores.agent_unmatched == 0
     assert result.comparison_md_path.name == "comparison.md"
-    md = result.comparison_md_path.read_text()
+    md = result.comparison_md_path.read_text(encoding="utf-8")
     assert "Missed by the agent" in md and "C008" in md
 
     repo = AssessmentRepository(settings.assessment_db_path)
@@ -321,7 +321,7 @@ async def test_proxy_requirement_disabled_is_recorded_and_warned(pipeline_env, m
     assert ep.require_proxy is False and ep.proxy_verified is False
     assert ep.docker_host == "unix:///var/run/docker.sock"
     assert warnings[0] in result.report.errors
-    md = result.md_path.read_text()
+    md = result.md_path.read_text(encoding="utf-8")
     assert "[!CAUTION]" in md and "require_proxy is disabled" in md
     assert "NOT verified as read-only proxy" in md
 
@@ -368,7 +368,7 @@ async def test_proxied_run_records_verified_endpoint_without_warning(pipeline_en
     assert warnings == []
     ep = result.report.docker_endpoint
     assert ep.require_proxy is True and ep.proxy_verified is True
-    assert "[!CAUTION]" not in result.md_path.read_text()
+    assert "[!CAUTION]" not in result.md_path.read_text(encoding="utf-8")
     repo = AssessmentRepository(settings.assessment_db_path)
     assert json.loads(repo.get_run(result.run_id)["docker_endpoint_json"])["proxy_verified"]
     repo.close()
@@ -413,7 +413,7 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     path = result.manifest_path
     assert path == result.md_path.parent / "manifest.json"
     assert not path.stat().st_mode & 0o222
-    doc = json.loads(path.read_text())
+    doc = json.loads(path.read_text(encoding="utf-8"))
     m = doc["manifest"]
     assert m["run_id"] == result.run_id
     exp = m["experiment"]
@@ -444,7 +444,7 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     repo.close()
 
     # report
-    assert doc["manifest_sha256"] in result.md_path.read_text()
+    assert doc["manifest_sha256"] in result.md_path.read_text(encoding="utf-8")
 
 
 async def test_rerun_of_deterministic_manifest_replays_pinned_evidence(pipeline_env):
@@ -473,8 +473,8 @@ async def test_rerun_of_deterministic_manifest_replays_pinned_evidence(pipeline_
     finally:
         pipeline.build_servers = pipeline_build_servers
 
-    a = json.loads(first.manifest_path.read_text())
-    b = json.loads(rerun.manifest_path.read_text())
+    a = json.loads(first.manifest_path.read_text(encoding="utf-8"))
+    b = json.loads(rerun.manifest_path.read_text(encoding="utf-8"))
     assert b["config_sha256"] == a["config_sha256"]  # same experimental configuration
     assert b["manifest_sha256"] != a["manifest_sha256"]  # but a distinct run record
     assert b["manifest"]["experiment"]["evidence"] == a["manifest"]["experiment"]["evidence"]
@@ -511,8 +511,8 @@ async def test_rerun_of_agent_manifest_runs_live_from_the_same_baseline(pipeline
     _scripted_run(holder)
     rerun = await run_assessment(new_settings, opts)
 
-    a = json.loads(first.manifest_path.read_text())["manifest"]
-    b = json.loads(rerun.manifest_path.read_text())["manifest"]
+    a = json.loads(first.manifest_path.read_text(encoding="utf-8"))["manifest"]
+    b = json.loads(rerun.manifest_path.read_text(encoding="utf-8"))["manifest"]
     assert b["acquisition"]["mode"] == "live" and b["acquisition"]["range_check"]
     assert b["replay_of"]["run_id"] == first.run_id
     # Same configuration; only the freshly collected evidence differs.
@@ -522,7 +522,7 @@ async def test_rerun_of_agent_manifest_runs_live_from_the_same_baseline(pipeline
 
 
 def first_limits(result) -> int:
-    doc = json.loads(result.manifest_path.read_text())
+    doc = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     return doc["manifest"]["experiment"]["agent"]["max_turns"]
 
 
@@ -531,7 +531,7 @@ async def test_rerun_refuses_altered_manifest_or_prompt_drift(pipeline_env, monk
     first = await run_assessment(settings, AssessOptions(use_agent=False, scan=False))
 
     # altered file
-    doc = json.loads(first.manifest_path.read_text())
+    doc = json.loads(first.manifest_path.read_text(encoding="utf-8"))
     doc["manifest"]["experiment"]["objective"] = "something else"
     altered = tmp_path / "altered.json"
     altered.write_text(json.dumps(doc))
@@ -562,7 +562,7 @@ async def test_range_baseline_is_checked_and_recorded_in_manifest(pipeline_env):
     result = await run_assessment(
         settings, AssessOptions(use_agent=False, scan=False, range_baseline="clean")
     )
-    m = json.loads(result.manifest_path.read_text())["manifest"]
+    m = json.loads(result.manifest_path.read_text(encoding="utf-8"))["manifest"]
     assert m["experiment"]["range_baseline"] == {
         "name": "clean",
         "fingerprint_sha256": baseline.fingerprint_sha256,
@@ -573,8 +573,8 @@ async def test_range_baseline_is_checked_and_recorded_in_manifest(pipeline_env):
     # a manifest re-run carries the baseline forward: same configuration
     new_settings, opts = options_from_manifest(settings, result.run_id)
     rerun = await run_assessment(new_settings, opts)
-    a = json.loads(result.manifest_path.read_text())
-    b = json.loads(rerun.manifest_path.read_text())
+    a = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    b = json.loads(rerun.manifest_path.read_text(encoding="utf-8"))
     assert b["config_sha256"] == a["config_sha256"]
     assert b["manifest"]["acquisition"]["range_check"] is None  # replay: nothing re-checked
 
@@ -612,3 +612,146 @@ async def test_range_baseline_errors_early(pipeline_env):
         await run_assessment(
             settings, AssessOptions(use_agent=False, snapshot_id="x", range_baseline="nope")
         )
+
+
+# ---------------------------------------------------------------------------
+# Nmap phase (NmapNetworkAgent after the Docker agent)
+# ---------------------------------------------------------------------------
+
+
+def _nmap_final_json() -> str:
+    return json.dumps(
+        {
+            "executive_summary": "Modbus exposed on the simulation container.",
+            "overall_risk": "high",
+            "hosts_assessed": ["192.168.95.45"],
+            "exposed_ics_services": [],
+            "findings": [],
+            "attack_surface_summary": "One ICS host scanned.",
+            "recommendations": ["Firewall port 502."],
+            "limitations": ["Scripted model"],
+        }
+    )
+
+
+@pytest.fixture
+def pipeline_env_with_nmap(pipeline_env, tmp_path):
+    """pipeline_env plus the nmap MCP server pointed at the fake nmap script."""
+    import sys
+    from pathlib import Path
+
+    settings, holder = pipeline_env
+    cfg = settings.mcp.servers["nmap"]
+    cfg.enabled = True
+    cfg.command = sys.executable
+    cfg.args = [str(Path(__file__).parent.parent / "fixtures" / "fake_nmap_mcp_server.py")]
+    cfg.env = {**cfg.env, "FAKE_NMAP_CALL_LOG": str(tmp_path / "nmap_calls.jsonl")}
+    cfg.client_session_timeout_seconds = 30
+    return settings, holder
+
+
+async def test_nmap_phase_runs_after_docker_agent(pipeline_env_with_nmap):
+    settings, holder = pipeline_env_with_nmap
+    model = ScriptedModel(
+        [
+            # Docker agent
+            [function_call("container_inspect", {"id_or_name": "simulation"}, call_id="d1")],
+            [assistant_message(_final_json(SOCKET, ROUTER_CAPS))],
+            # Nmap agent
+            [function_call("do-nmap", {"target": "192.168.95.45"}, call_id="n1")],
+            [assistant_message(_nmap_final_json())],
+        ]
+    )
+    holder["model"] = model
+
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+
+    # Both agents produced output; the nmap outcome is on the result.
+    assert result.agent_report.agent_status == "ok"
+    assert result.nmap_outcome is not None and result.nmap_outcome.status == "ok"
+    assert result.nmap_outcome.assessment.hosts_assessed == ["192.168.95.45"]
+    assert result.status == "completed"
+
+    # The Docker agent is never offered do-nmap; the nmap agent only gets do-nmap.
+    docker_tools = {t.name for t in model.calls[0].tools}
+    nmap_tools = {t.name for t in model.calls[2].tools}
+    assert "do-nmap" not in docker_tools and "container_inspect" in docker_tools
+    assert nmap_tools == {"do-nmap"}
+
+    # The nmap agent's input is built from the snapshot + the Docker findings.
+    nmap_input = str(model.calls[2].input)
+    assert "PRIORITY TARGETS" in nmap_input
+    assert "simulation" in nmap_input and "Docker socket mounted" in nmap_input
+    assert "192.168.95.45" in nmap_input
+
+    # Separate budgets: Docker metrics count only Docker agent calls, but every
+    # call (both agents) is persisted.
+    assert result.report.metrics.tool_calls_agent == 1
+    repo = AssessmentRepository(settings.assessment_db_path)
+    try:
+        rows = repo.conn.execute(
+            "SELECT server, tool, status FROM tool_calls WHERE run_id = ? AND phase = 'agent'",
+            (result.run_id,),
+        ).fetchall()
+    finally:
+        repo.close()
+    assert ("nmap", "do-nmap", "ok") in [tuple(r) for r in rows]
+
+
+async def test_nmap_failure_marks_run_completed_with_errors(pipeline_env_with_nmap):
+    settings, holder = pipeline_env_with_nmap
+    holder["model"] = ScriptedModel(
+        [
+            [assistant_message(_final_json(SOCKET))],  # Docker agent
+            [assistant_message("not json")],  # Nmap agent
+        ]
+    )
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+    assert result.agent_report.agent_status == "ok"
+    assert result.nmap_outcome.status == "invalid_output"
+    assert result.status == "completed_with_errors"
+    assert any(e.startswith("nmap: ") for e in result.report.errors)
+
+
+async def test_nmap_phase_skipped_when_server_disabled(pipeline_env):
+    settings, holder = pipeline_env  # conftest disables the nmap server
+    holder["model"] = ScriptedModel([[assistant_message(_final_json(SOCKET))]])
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+    assert result.nmap_outcome is None
+    assert result.status == "completed"
+
+
+async def test_nmap_phase_uses_its_own_limits(pipeline_env_with_nmap):
+    settings, holder = pipeline_env_with_nmap
+    settings.agent.limits.max_tool_calls = 50
+    settings.agent.nmap_limits.max_tool_calls = 1
+    settings.agent.nmap_limits.max_turns = 3
+    holder["model"] = ScriptedModel(
+        [
+            # Docker agent: two calls, well within its own budget of 50
+            [function_call("container_list", {}, call_id="d1")],
+            [function_call("container_inspect", {"id_or_name": "simulation"}, call_id="d2")],
+            [assistant_message(_final_json(SOCKET))],
+            # Nmap agent: budget 1, max_turns 3
+            [function_call("do-nmap", {"target": "192.168.95.45"}, call_id="n1")],
+            [function_call("do-nmap", {"target": "192.168.95.2"}, call_id="n2")],
+            [function_call("do-nmap", {"target": "192.168.95.5"}, call_id="n3")],
+        ]
+    )
+    result = await run_assessment(settings, AssessOptions(model_profile="scripted", scan=False))
+
+    assert result.agent_report.agent_status == "ok"
+    assert result.nmap_outcome.status == "max_turns"  # nmap_limits.max_turns, not 60
+    repo = AssessmentRepository(settings.assessment_db_path)
+    try:
+        rows = repo.conn.execute(
+            "SELECT server, status FROM tool_calls WHERE run_id = ? AND phase = 'agent' "
+            "ORDER BY id",
+            (result.run_id,),
+        ).fetchall()
+    finally:
+        repo.close()
+    docker = [r[1] for r in rows if r[0] == "docker"]
+    nmap = [r[1] for r in rows if r[0] == "nmap"]
+    assert docker == ["ok", "ok"]
+    assert nmap[0] == "ok" and set(nmap[1:]) == {"budget_exhausted"}

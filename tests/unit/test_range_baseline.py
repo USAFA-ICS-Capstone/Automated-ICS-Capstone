@@ -127,7 +127,7 @@ def test_storage_is_write_once_and_tamper_evident(settings, tmp_path):
         load_baseline(tmp_path, "missing")
 
     path = tmp_path / "range-baselines" / "clean" / "baseline.json"
-    path.write_text(path.read_text().replace('"running"', '"exited"', 1))
+    path.write_text(path.read_text(encoding="utf-8").replace('"running"', '"exited"', 1), encoding="utf-8")
     with pytest.raises(ValueError, match="modified"):
         load_baseline(tmp_path, "clean")
 

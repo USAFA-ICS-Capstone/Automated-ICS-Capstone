@@ -333,7 +333,7 @@ def write_manifest(manifest: RunManifest, output_dir: Path) -> Path:
     run_dir = output_dir / manifest.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     path = run_dir / MANIFEST_FILENAME
-    with path.open("x") as fh:  # never overwrite an existing manifest
+    with path.open("x", encoding="utf-8") as fh:  # never overwrite an existing manifest
         json.dump(manifest_document(manifest), fh, indent=2, sort_keys=True)
         fh.write("\n")
     os.chmod(path, 0o444)

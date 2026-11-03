@@ -223,7 +223,7 @@ def record_baseline(data_dir: Path, name: str, snapshot: InventorySnapshot) -> R
     d = baseline_dir(data_dir, name)
     d.mkdir(parents=True, exist_ok=True)
     try:
-        with (d / "baseline.json").open("x") as fh:
+        with (d / "baseline.json").open("x", encoding="utf-8") as fh:
             fh.write(baseline.model_dump_json(indent=2))
     except FileExistsError as exc:
         raise ValueError(f"Baseline '{name}' already exists; record under a new name") from exc
@@ -237,7 +237,7 @@ def load_baseline(data_dir: Path, name: str) -> RangeBaseline:
             f"No range baseline named '{name}' (expected {path}). "
             "Create one with deploy/grfics/range.sh save NAME"
         )
-    baseline = RangeBaseline.model_validate_json(path.read_text())
+    baseline = RangeBaseline.model_validate_json(path.read_text(encoding="utf-8"))
     if fingerprint_sha256(baseline.fingerprint) != baseline.fingerprint_sha256:
         raise ValueError(f"Range baseline '{name}' was modified after it was recorded")
     return baseline
@@ -253,9 +253,21 @@ def list_baselines(data_dir: Path) -> list[str]:
 def save_verification(data_dir: Path, result: RangeVerification) -> Path:
     d = baseline_dir(data_dir, result.baseline) / "verifications"
     d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{result.verified_at:%Y%m%dT%H%M%S%fZ}.json"
-    path.write_text(result.model_dump_json(indent=2))
-    return path
+    # The clock can tick coarsely (~15 ms on Windows), so two verifications may share
+    # a timestamp. Never overwrite: claim the name exclusively and add a sequence
+    # suffix on collision. "_NNN" sorts after ".json", so later saves stay "newer"
+    # under the reverse-name ordering used by latest_reset().
+    stamp = f"{result.verified_at:%Y%m%dT%H%M%S%fZ}"
+    payload = result.model_dump_json(indent=2)
+    seq = 0
+    while True:
+        path = d / (f"{stamp}.json" if seq == 0 else f"{stamp}_{seq:03d}.json")
+        try:
+            with path.open("x", encoding="utf-8") as fh:
+                fh.write(payload)
+            return path
+        except FileExistsError:
+            seq += 1
 
 
 def latest_reset(data_dir: Path, name: str) -> RangeVerification | None:
@@ -264,7 +276,7 @@ def latest_reset(data_dir: Path, name: str) -> RangeVerification | None:
     if not d.is_dir():
         return None
     for path in sorted(d.glob("*.json"), reverse=True):
-        v = RangeVerification.model_validate_json(path.read_text())
+        v = RangeVerification.model_validate_json(path.read_text(encoding="utf-8"))
         if v.since is not None:
             return v
     return None
