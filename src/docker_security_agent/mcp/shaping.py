@@ -8,12 +8,12 @@ about 990 KB as one-entry-per-CVE JSON.
 
 So, **for agent calls only**, results pass through ``shape_result``. The rule
 (harness h2) is: reorganise, never summarise. Nothing that carries security
-meaning is dropped or reworded; the full redacted result is stored anyway
+meaning is dropped or reworded; the full result is stored anyway
 (mcp/evidence.py) and the agent can fetch it back by reference.
 
 * ``*_inspect`` documents become one ``Path: value`` line per leaf field,
   using Docker's own field paths (``HostConfig.CapAdd: [NET_ADMIN, NET_RAW]``),
-  so the agent can cite exactly the paths the validator looks up. Only the
+  so the agent's evidence names the exact Docker field it read. Only the
   internal identifiers in ``INSPECT_NOISE`` are removed.
 * Trivy ``findings_list`` pages are grouped by package (package, version,
   type and path stated once, every CVE listed under it), exact duplicate
@@ -42,8 +42,8 @@ TRIVY_CATEGORY = {0: "vulnerability", 1: "misconfiguration", 2: "license", 3: "s
 _SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
 
 # Fields removed from inspect documents before the model sees them. The test is
-# "is this noise to any security analyst looking at a container?", never "does
-# the validator check it?". Only internal identifiers pass that test; paths,
+# "is this noise to any security analyst looking at a container?", never "is
+# this one of the fields the rules check?". Only internal identifiers pass that test; paths,
 # timestamps, MAC addresses and both port views are kept. ``*`` matches one key.
 INSPECT_NOISE: dict[str, str] = {
     "NetworkSettings.SandboxID": "Docker's internal ID of the network sandbox",

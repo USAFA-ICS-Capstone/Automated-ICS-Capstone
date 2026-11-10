@@ -8,20 +8,17 @@ High-level map of the package (read in this order to understand the flow):
 
     mcp/                    Everything between the app and the MCP servers:
         policy.py             which tools / arguments are allowed (allow-list).
-        redaction.py          scrub secrets out of tool results.
         shaping.py            shrink big tool results before the LLM sees them.
         recorder.py           log every tool call (for metrics + SQLite).
-        servers.py            GuardedMCPServer = MCP client + policy + redaction.
+        servers.py            GuardedMCPServer = MCP client + policy + shaping.
         registry.py           build servers from config, health checks, setup.
 
     inventory/              Turn raw `docker inspect` JSON into typed assets.
-    security/               Deterministic rules, Trivy parsing, scan orchestration,
-                            validation of the LLM's output, and the agent-vs-rules
-                            comparison.
+    security/               Deterministic rules, Trivy parsing, scan orchestration.
     llm/                    Model factory (OpenAI / Ollama / vLLM) + capability checks.
     agents/                 The single DockerSecurityAssessmentAgent.
     memory/                 SQLite: agent sessions + structured assessment store.
-    reporting/              agent, deterministic and comparison reports (.json + .md).
+    reporting/              agent and deterministic reports (.json + .md).
     schemas/                Pydantic data models shared by all of the above.
 """
 
@@ -42,7 +39,11 @@ __version__ = "0.1.0"
 #   v6 - (with harness h2) one container at a time, recording each container's
 #        section right after analysing it; tool results carry references (E7)
 #        and can be fetched back; final findings only for what no section covers
-PROMPT_VERSION = "v6"
+#   v7 - (with harness h3) the rule about "<redacted>" values is gone: tool results
+#        are no longer redacted
+#   v8 - (with harness h4) the out-of-scope note names the agent's own container
+#        (no read-only proxy any more)
+PROMPT_VERSION = "v8"
 
 # Bumped whenever the harness around the agent changes what the model sees or
 # can do, independently of the prompt text. Recorded in every run manifest.
@@ -54,4 +55,8 @@ PROMPT_VERSION = "v6"
 #        (record_container_section) merged into the assessment; older results
 #        replaced by reference stubs before each model call (keep the last N);
 #        exact repeat calls answered with the earlier reference
-HARNESS_VERSION = "h2"
+#   h3 - no redaction: tool results (environment values, labels, credentials) reach
+#        the model, the evidence store, the database and the reports unmodified
+#   h4 - no read-only proxy: the tools have full Docker access. Containment instead:
+#        the agent runs in a container and Docker Desktop shares no Mac folders
+HARNESS_VERSION = "h4"

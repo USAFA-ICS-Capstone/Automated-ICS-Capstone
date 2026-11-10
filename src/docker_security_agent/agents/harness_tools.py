@@ -19,7 +19,6 @@ from agents import FunctionTool, function_tool
 
 from docker_security_agent.mcp.evidence import EvidenceStore, StoredOutput
 from docker_security_agent.mcp.recorder import ToolCallRecorder
-from docker_security_agent.mcp.redaction import find_secret_leaks
 from docker_security_agent.mcp.shaping import (
     inspect_lines,
     shape_result,
@@ -122,8 +121,6 @@ def build_harness_tools(
         text = f"{header}\n" + to_text(
             body, max(max_result_chars - len(header) - 1, 1), ref=stored.ref
         )
-        if find_secret_leaks(text):  # same last line of defence as the MCP tools
-            text = f"{header}\nWithheld by the redaction guardrail. Continue without it."
         recorder.add(
             phase="agent",
             server=HARNESS_SERVER,

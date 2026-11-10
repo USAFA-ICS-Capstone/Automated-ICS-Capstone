@@ -5,7 +5,7 @@ Harness h2. The model only ever sees the *shaped* form of a tool result
 (agents/context_filter.py). This store is what keeps that safe:
 
 * every successful agent tool call is stored **as it happens**, complete
-  (redacted, not shaped), under the next reference ``E1``, ``E2``... The
+  (not shaped), under the next reference ``E1``, ``E2``... The
   reference is the first thing on the result the model sees;
 * the agent can read any stored result back with ``evidence_get``;
 * a repeated call with identical arguments is answered with the reference
@@ -38,7 +38,7 @@ class StoredOutput:
     server: str
     tool: str
     arguments: dict[str, Any]
-    items: list[Any]  # the full tool result: redacted, not shaped
+    items: list[Any]  # the full tool result, not shaped
     subject: str = ""  # what it is about: container / image name, scan target
 
 
