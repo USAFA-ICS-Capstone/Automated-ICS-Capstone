@@ -314,7 +314,6 @@ def _af(resource, title, severity="high"):
         ],
         vulnerability_ids=[],
         explanation="e",
-        remediation="r",
     )
 
 
@@ -323,7 +322,6 @@ def test_sections_are_merged_before_final_findings():
         executive_summary="s",
         overall_risk="high",
         findings=[_af("net", "Flat network")],
-        recommendations=[],
         limitations=[],
     )
     outcome = AgentRunOutcome(status="ok", assessment=final)

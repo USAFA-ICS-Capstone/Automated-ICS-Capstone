@@ -51,7 +51,6 @@ class AgentFinding(BaseModel):
         description="CVE/GHSA IDs copied from Trivy findings for this resource; [] otherwise"
     )
     explanation: str = Field(description="Why this matters in an OT/ICS context")
-    remediation: str
 
 
 class ContainerSection(BaseModel):
@@ -76,7 +75,6 @@ class AgentAssessment(BaseModel):
     executive_summary: str
     overall_risk: Literal["critical", "high", "medium", "low"]
     findings: list[AgentFinding] = Field(description="Most urgent first")
-    recommendations: list[str]
     limitations: list[str]
 
 
@@ -230,7 +228,6 @@ class AgentReport(BaseModel):
     executive_summary: str
     overall_risk: str | None  # None when the agent produced no valid assessment
     findings: list[Finding]  # the agent's claims (status potential), in the agent's order
-    recommendations: list[str]
     limitations: list[str]
     errors: list[str]
     metrics: RunMetrics

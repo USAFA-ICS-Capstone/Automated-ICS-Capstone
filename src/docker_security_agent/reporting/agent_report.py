@@ -71,7 +71,7 @@ def agent_findings(assessment: AgentAssessment) -> list[Finding]:
                     for e in f.evidence
                 ],
                 explanation=f.explanation,
-                remediation=f.remediation,
+                remediation="",  # the agent documents issues; analysts decide fixes (v9)
                 references=sorted({v.strip().upper() for v in f.vulnerability_ids if v.strip()}),
             )
         )
@@ -103,7 +103,6 @@ def build_agent_report(
             ),
             overall_risk=None,
             findings=[],
-            recommendations=[],
             limitations=[],
             errors=list(errors),
             metrics=metrics,
@@ -119,7 +118,6 @@ def build_agent_report(
         executive_summary=a.executive_summary,
         overall_risk=a.overall_risk,
         findings=agent_findings(a),
-        recommendations=a.recommendations,
         limitations=a.limitations,
         errors=list(errors),
         metrics=metrics,
@@ -160,14 +158,7 @@ def render_agent_markdown(r: AgentReport, mcp_servers: list[MCPServerInfo]) -> s
     else:
         md.append("_None._\n")
 
-    md.append("\n## 3. Recommendations\n")
-    md.append(
-        "\n".join(f"{i}. {rec}" for i, rec in enumerate(r.recommendations, 1)) + "\n"
-        if r.recommendations
-        else "_None._\n"
-    )
-
-    md.append("\n## 4. Limitations (stated by the agent)\n")
+    md.append("\n## 3. Limitations (stated by the agent)\n")
     md.append(
         "\n".join(f"- {lim}" for lim in r.limitations) + "\n" if r.limitations else "_None._\n"
     )
@@ -175,7 +166,7 @@ def render_agent_markdown(r: AgentReport, mcp_servers: list[MCPServerInfo]) -> s
         md.append("\n**Errors / notes during the run:**\n")
         md.append("\n".join(f"- {_md_escape(n)}" for n in r.errors) + "\n")
 
-    md.append("\n## 5. Execution metrics\n")
+    md.append("\n## 4. Execution metrics\n")
     md.append(metrics_markdown(r.metrics, mcp_servers))
     return "\n".join(md)
 

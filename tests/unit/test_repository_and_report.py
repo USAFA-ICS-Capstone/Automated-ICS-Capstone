@@ -156,10 +156,8 @@ def _agent_outputs(snapshot, scans, findings):
                 ],
                 vulnerability_ids=[],
                 explanation="pivot",
-                remediation="split",
             )
         ],
-        recommendations=["Split networks"],
         limitations=["none"],
     )
     report = build_agent_report(
@@ -221,8 +219,9 @@ def test_agent_report_files(snapshot, settings, scans, tmp_path, repo):
     assert agent_report.overall_risk == "high"
 
     md = render_agent_markdown(agent_report, [])
-    for heading in ("1. Summary", "2. Findings", "3. Recommendations", "5. Execution metrics"):
+    for heading in ("1. Summary", "2. Findings", "3. Limitations", "4. Execution metrics"):
         assert f"## {heading}" in md, heading
+    assert "Recommendations" not in md and "Remediation" not in md  # prompt v9
     a_path = write_agent_report(agent_report, [], tmp_path)
     assert a_path.name == "agent_report.md"
     assert AgentReport.model_validate_json(a_path.with_suffix(".json").read_text())
@@ -244,10 +243,10 @@ def test_agent_findings_are_reported_as_given():
         return AgentFinding(title=title, resource_name=resource, severity="high",
                             evidence=[AgentEvidence(tool="container_inspect",
                                                     field="Config.User", value="")],
-                            vulnerability_ids=list(cves), explanation="e", remediation="r")
+                            vulnerability_ids=list(cves), explanation="e")
 
     a = AgentAssessment(
-        executive_summary="s", overall_risk="high", recommendations=[], limitations=[],
+        executive_summary="s", overall_risk="high", limitations=[],
         findings=[finding("ghost-container", "Invented"), finding("plc", "Root", ["cve-1"]),
                   finding("plc", "Root")],
     )

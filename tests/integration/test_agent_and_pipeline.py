@@ -54,7 +54,6 @@ def _finding(resource, title, field, value, *, severity="high", tool="container_
         "evidence": [{"tool": tool, "field": field, "value": value}] if field else [],
         "vulnerability_ids": list(vulns),
         "explanation": "pivot into the process network",
-        "remediation": "fix it",
     }
 
 
@@ -64,7 +63,6 @@ def _final_json(*findings) -> str:
             "executive_summary": "Docker socket on simulation gives host control; CVE-2026-103111.",
             "overall_risk": "critical",
             "findings": list(findings),
-            "recommendations": ["Remove the docker.sock mount from simulation"],
             "limitations": ["Scripted model"],
         }
     )
@@ -441,7 +439,7 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     exp = m["experiment"]
     assert exp["scenario_id"] == settings.experiment.scenario_id
     assert exp["evidence"]["snapshot_id"] == result.report.snapshot_id
-    assert exp["prompt_bundle"]["version"] == "v8"
+    assert exp["prompt_bundle"]["version"] == "v9"
     assert exp["prompt_bundle"]["harness_version"] == "h4"
     assert exp["agent"]["keep_recent_tool_outputs"] == 8
     assert exp["schema_versions"]["db_schema_version"] >= 4

@@ -38,7 +38,7 @@ Paths on the Mac assume this layout:
 
 1. The deterministic checks (20 rules + Trivy) assess the lab, with no AI. The
    agent never sees their results.
-2. The agent (`DockerSecurityAssessmentAgent`, prompt v8, harness h4) gets only the
+2. The agent (`DockerSecurityAssessmentAgent`, prompt v9, harness h4) gets only the
    objective and its approved MCP tools. It decides what to inspect and scan,
    and reports its own findings.
 3. Its findings are reported exactly as the agent gave them. Nothing checks them
@@ -326,7 +326,7 @@ caffeinate -i deploy/agent/run.sh assess --model local-vllm --range-baseline cle
   runs you will report: without it the manifest has no range check.
 - The deterministic part (inventory, rules, Trivy) takes about 1-3 minutes.
   The agent phase took about 3 minutes in the first vLLM run; its limits are
-  60 turns, 100 tool calls and 3600 seconds (`config/agent.yaml`).
+  150 turns, 200 tool calls and 7200 seconds (`config/agent.yaml`).
 - The command ends with a summary like:
 
 ```text

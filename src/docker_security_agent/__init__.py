@@ -43,7 +43,11 @@ __version__ = "0.1.0"
 #        are no longer redacted
 #   v8 - (with harness h4) the out-of-scope note names the agent's own container
 #        (no read-only proxy any more)
-PROMPT_VERSION = "v8"
+#   v9 - the agent documents issues only: no remediation per finding and no
+#        recommendations list (analysts decide fixes); step 4's combinations are
+#        examples, not an exhaustive list: also report weaknesses known from training;
+#        no fixed tool-call estimate per container (budget raised in agent.yaml)
+PROMPT_VERSION = "v9"
 
 # Bumped whenever the harness around the agent changes what the model sees or
 # can do, independently of the prompt text. Recorded in every run manifest.

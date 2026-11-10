@@ -294,9 +294,9 @@ def _finding_block(f: Finding) -> str:
         "",
         f"**Why it matters:** {f.explanation}",
         "",
-        f"**Remediation:** {f.remediation}",
-        "",
     ]
+    if f.remediation:  # agent findings have none (prompt v9)
+        lines += [f"**Remediation:** {f.remediation}", ""]
     if f.references:
         lines += ["**References:** " + ", ".join(f.references), ""]
     return "\n".join(lines)
