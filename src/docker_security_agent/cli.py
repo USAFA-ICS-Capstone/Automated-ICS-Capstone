@@ -10,6 +10,7 @@ Commands
   mcp tools            show the tools the agent will actually see
   inventory            collect and print a Docker inventory snapshot (read-only)
   assess               run a full assessment (see pipeline.py)
+  verify               Phase 2: verify a run's network claims with nmap + modbus
   runs                 list previous runs
   report --run-id ID   print a stored report: --kind agent | deterministic
 
@@ -470,6 +471,14 @@ def assess(
             "(see `docker-audit range`)"
         ),
     ] = None,
+    and_verify: Annotated[
+        bool,
+        typer.Option(
+            "--and-verify",
+            help="After Phase 1, immediately run Phase 2 (verify) on this run's report. "
+            "Needs the nmap/modbus servers and the agent attached to the GRFICS networks.",
+        ),
+    ] = False,
 ) -> None:
     """Run an assessment; write the deterministic report, and with an agent also the
     agent report, to outputs/<RUN_ID>/."""
@@ -524,6 +533,76 @@ def assess(
         console.print("[yellow]Notes:[/yellow]")
         for e in result.report.errors[:10]:
             console.print(f"  - {e[:300]}")
+
+    # Optional chain: Phase 2 reads the agent report Phase 1 just wrote. A
+    # verify failure (e.g. the Phase-2 servers can't connect) is reported but
+    # never fails the completed assessment.
+    if and_verify:
+        if not result.agent_report:
+            console.print("[yellow]--and-verify skipped:[/yellow] this run produced no agent report.")
+        else:
+            console.print("\n[dim]• Phase 2 — verifying network claims...[/dim]")
+            # Chained from a completed assessment: a verify failure is reported
+            # but does not change the assess exit status.
+            _run_verify(settings, model=model, run=result.run_id, skip_model_check=skip_model_check)
+
+
+def _run_verify(
+    settings: Settings, *, model: str | None, run: str | None, skip_model_check: bool
+) -> bool:
+    """Run Phase 2 and print its result. Returns False on abort/config error.
+
+    Shared by `verify` and `assess --and-verify`; the caller decides whether a
+    failure should set a non-zero exit code.
+    """
+    from docker_security_agent.verification_pipeline import (
+        VerificationAborted,
+        VerifyOptions,
+        run_verification,
+    )
+
+    try:
+        opts = VerifyOptions(model_profile=model, run_id=run, skip_model_check=skip_model_check)
+        opts.progress = lambda msg: console.print(f"[dim]•[/dim] {msg}")
+        result = asyncio.run(run_verification(settings, opts))
+    except (ConfigError, VerificationAborted) as exc:
+        console.print(f"[red]Verification not started/aborted:[/red] {exc}")
+        return False
+
+    console.print()
+    console.print(
+        f"[bold]Verify {result.run_id}[/bold]: {result.status} — "
+        f"{result.records} claim(s) recorded"
+    )
+    console.print(f"Source Phase-1 report: {result.source_report}")
+    console.print(f"Verification report:   {result.report_md_path}")
+    return True
+
+
+# ---------------------------------------------------------------------------
+# verify (Phase 2 — network verification)
+# ---------------------------------------------------------------------------
+
+
+@app.command()
+def verify(
+    model: Annotated[str | None, typer.Option(help="Model profile from config/models.yaml")] = None,
+    run: Annotated[
+        str | None,
+        typer.Option(help="Phase-1 run id to verify (default: the latest run with an agent report)"),
+    ] = None,
+    skip_model_check: Annotated[bool, typer.Option(help="Skip capability preflight")] = False,
+) -> None:
+    """Phase 2: verify a Phase-1 run's network claims on the wire with nmap + modbus.
+
+    Reads outputs/<RUN>/agent_report.json, actively tests each network claim
+    (starting with kali -> plc:502), and writes outputs/<RUN>/verification_report.{json,md}.
+    Needs the nmap/modbus MCP servers and the agent attached to the GRFICS networks
+    (see deploy/agent/compose.grfics.example.yml).
+    """
+    settings = _settings()
+    if not _run_verify(settings, model=model, run=run, skip_model_check=skip_model_check):
+        raise typer.Exit(1)
 
 
 # ---------------------------------------------------------------------------

@@ -42,6 +42,12 @@ def fake_mcp_settings(settings: Settings, tmp_path: Path) -> Settings:
     """Point both MCP servers at the fake stdio server (no Docker/Trivy needed)."""
     script = str(FIXTURES / "fake_mcp_server.py")
     call_log = tmp_path / "mcp_calls.jsonl"
+    # Phase-1 integration tests cover the docker/trivy stdio path only. The
+    # Phase-2 verify servers (nmap/modbus, real `uv --directory` commands) are
+    # exercised by their own unit tests, so disable them here.
+    for phase2 in ("nmap", "modbus"):
+        if phase2 in settings.mcp.servers:
+            settings.mcp.servers[phase2].enabled = False
     for name, kind in (("docker", "docker"), ("trivy", "trivy")):
         cfg = settings.mcp.servers[name]
         cfg.command = sys.executable

@@ -24,6 +24,7 @@ Argument rules (configured in mcp_servers.yaml -> argument_policy):
 
 from __future__ import annotations
 
+import ipaddress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -52,6 +53,17 @@ class ToolPolicy:
         self._scan = mcp_config.argument_policy.scan_image
         # Filled by set_scan_targets() once the inventory is known.
         self._scan_targets: set[str] | None = None
+        # Phase 2: which servers are nmap (so their target is gated to the lab).
+        self._nmap = mcp_config.argument_policy.nmap
+        self._nmap_servers = {
+            s.name
+            for s in mcp_config.servers.values()
+            if s.enabled and s.role == "network_scanner"
+        }
+        self._nmap_networks = [
+            ipaddress.ip_network(c, strict=False) for c in self._nmap.allowed_cidrs
+        ]
+        self._nmap_hostnames = {h.strip().lower() for h in self._nmap.allowed_hostnames}
 
     # ---- configuration ----------------------------------------------------
 
@@ -80,7 +92,40 @@ class ToolPolicy:
             return self._check_scan_image(args)
         if tool == "findings_list":
             return self._check_findings_list(args)
+        if server in self._nmap_servers:
+            return self._check_nmap(args)
         return PolicyDecision(True, arguments=args)
+
+    def _check_nmap(self, args: dict[str, Any]) -> PolicyDecision:
+        """Phase 2: an nmap scan may only target the GRFICS lab.
+
+        The target must be an IP inside an allowed subnet, or a lab hostname.
+        Keeps the active scan from being pointed anywhere off the range.
+        """
+        if not self._nmap.restrict_targets:
+            return PolicyDecision(True, arguments=args)
+        target = str(args.get("target", "")).strip()
+        if not target:
+            return PolicyDecision(False, "nmap scan requires a 'target'.")
+        host = target.lower()
+        if host in self._nmap_hostnames:
+            return PolicyDecision(True, arguments=args)
+        try:
+            ip = ipaddress.ip_address(target)
+        except ValueError:
+            return PolicyDecision(
+                False,
+                f"Target '{target}' is not an allowed lab host. Allowed hostnames: "
+                f"{', '.join(sorted(self._nmap_hostnames)) or 'none'}; allowed subnets: "
+                f"{', '.join(str(n) for n in self._nmap_networks) or 'none'}.",
+            )
+        if any(ip in net for net in self._nmap_networks):
+            return PolicyDecision(True, arguments=args)
+        return PolicyDecision(
+            False,
+            f"Target IP {target} is outside the lab subnets "
+            f"({', '.join(str(n) for n in self._nmap_networks) or 'none'}).",
+        )
 
     def _check_scan_image(self, args: dict[str, Any]) -> PolicyDecision:
         target = str(args.get("target", "")).strip()

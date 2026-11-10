@@ -1,27 +1,42 @@
 # ---------------------------------------------------------------------------
-# EXAMPLE ONLY - not used by default (Compose never loads this file unless it
-# is passed with -f). Kept for the next phase: attaching the containerized
-# agent to existing GRFICSv3 networks without rebuilding the image.
+# Phase 2 (network verification) vantage point — "Option A".
+#
+# NOT loaded by default (Compose ignores this file unless it is passed with
+# -f). It attaches the agent container to the existing GRFICSv3 networks so the
+# nmap/modbus MCP servers — which run as stdio subprocesses INSIDE the agent
+# container — probe the PLC from the same network segments as the kali
+# container, without running anything inside kali.
 #
 #   docker compose -f deploy/agent/compose.yml \
-#                  -f deploy/agent/compose.grfics.example.yml run --rm agent ...
+#                  -f deploy/agent/compose.grfics.example.yml \
+#                  run --rm agent verify
 #
 # The networks must already exist (GRFICS is started separately) and are
 # declared external, so this file never creates, changes or removes them.
-# Their names are <GRFICS compose project>_<network>, e.g. grficsv3_c-dmz-net;
+# Their names are <GRFICS compose project>_<network>, e.g. grficsv3_b-ics-net;
 # check with `docker network ls`.
 #
 # Attaching only changes which IP networks the agent container has interfaces
-# on. It adds no tools: the agent's capabilities are still limited to the
-# approved MCP tools in config/mcp_servers.yaml.
+# on. It adds no tools: the agent is still limited to the approved MCP tools in
+# config/mcp_servers.yaml, and nmap is still gated to the lab subnets.
 # ---------------------------------------------------------------------------
 services:
   agent:
     networks:
       default: {}
-      grfics-dmz: {}
+      grfics-ics: {}   # 192.168.95.0/24 — the PLC / Modbus (502) segment
+      grfics-dmz: {}   # 192.168.90.0/24
+    environment:
+      # Point the modbus MCP server at the PLC on the ICS network. Use the
+      # GRFICS service name (Docker DNS) or the PLC's static IP.
+      MODBUS_HOST: ${GRFICS_PLC_HOST:-plc}
+      MODBUS_PORT: ${GRFICS_PLC_PORT:-502}
+      MODBUS_TYPE: tcp
 
 networks:
+  grfics-ics:
+    external: true
+    name: ${GRFICS_ICS_NETWORK:-grficsv3_b-ics-net}
   grfics-dmz:
     external: true
     name: ${GRFICS_DMZ_NETWORK:-grficsv3_c-dmz-net}

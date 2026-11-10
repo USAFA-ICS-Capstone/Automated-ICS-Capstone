@@ -74,6 +74,56 @@ servers:
       check_contains: "mcp"
       install_command: ["trivy", "plugin", "install", "mcp@v0.0.20"]
 
+  # ------------------------------------------------------------------------
+  # PHASE 2 — network verification servers (used only by `docker-audit verify`,
+  # never by `assess`). These ACT on the network, so their vantage point is the
+  # agent container itself, which `verify` attaches to the GRFICS ICS/DMZ
+  # networks (deploy/agent/compose.grfics.example.yml). They are launched as
+  # stdio subprocesses from pinned git clones baked into the image (see
+  # Dockerfile); on a host without those clones they simply fail to connect.
+  # ------------------------------------------------------------------------
+
+  # NmapMCP (0xPratikPatil): reachability + service/version. ~47 tools exist;
+  # only these three are approved, and each takes just target/port (no raw
+  # flags), so the argument_policy below only has to validate the target.
+  nmap:
+    enabled: true
+    role: network_scanner
+    command: uv
+    # --no-sync: use the venv baked at build time; never re-resolve at runtime
+    # (the image is offline, so a runtime sync would fail).
+    args: ["--directory", "${NMAPMCP_DIR:-/opt/nmapmcp}", "run", "--no-sync", "python", "main.py"]
+    # Pin uv to this server's own venv (the image sets a global
+    # UV_PROJECT_ENVIRONMENT=/opt/venv for the agent app, which must not be reused).
+    env:
+      UV_PROJECT_ENVIRONMENT: "${NMAPMCP_DIR:-/opt/nmapmcp}/.venv"
+    client_session_timeout_seconds: 300
+    allowed_tools:
+      - check_single_port   # one port, e.g. kali -> plc:502
+      - quick_scan          # fast open-port sweep
+      - service_scan        # service/version (-sV)
+
+  # modbus-mcp (kukapay): ICS protocol reads. The PLC target is pinned by env
+  # (MODBUS_HOST/PORT), not by a tool argument, so no argument gate is needed.
+  # Only READ tools are approved this pass; write_register/write_coil are left
+  # out of the allow-list (they belong to the later attacker-analysis phase).
+  modbus:
+    enabled: true
+    role: ics_protocol
+    command: uv
+    args: ["--directory", "${MODBUS_MCP_DIR:-/opt/modbus-mcp}", "run", "--no-sync", "modbus-mcp"]
+    env:
+      UV_PROJECT_ENVIRONMENT: "${MODBUS_MCP_DIR:-/opt/modbus-mcp}/.venv"
+      MODBUS_TYPE: "${MODBUS_TYPE:-tcp}"
+      MODBUS_HOST: "${MODBUS_HOST:-plc}"
+      MODBUS_PORT: "${MODBUS_PORT:-502}"
+    client_session_timeout_seconds: 60
+    allowed_tools:
+      - read_register
+      - read_input_registers
+      - read_coils
+      - read_multiple_holding_registers
+
 # Per-tool argument rules enforced by mcp/policy.py.
 argument_policy:
   scan_image:
@@ -82,3 +132,19 @@ argument_policy:
     # "secret" scanning is excluded on purpose: it would return secret values.
     allowed_scan_types: ["vuln"]
     forced_output_format: json
+
+  # Phase 2: nmap may only be pointed at the GRFICS lab. A scan whose target is
+  # neither an IP in these subnets nor one of these lab hostnames is refused.
+  nmap:
+    restrict_targets: true
+    allowed_cidrs:
+      - 192.168.95.0/24   # grficsv3_b-ics-net (the PLC / Modbus segment)
+      - 192.168.90.0/24   # grficsv3_c-dmz-net
+    allowed_hostnames:
+      - plc
+      - hmi
+      - ews
+      - kali
+      - router
+      - caldera
+      - simulation

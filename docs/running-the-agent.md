@@ -373,6 +373,39 @@ wrong image would appear as a finding. Runs before 2026-11-09 also have a
 `comparison.md` (scores against the deterministic findings) and a "Rejected findings"
 section (claims that failed validation); both have since been removed.
 
+### 10b. Phase 2 — verify the network claims (optional)
+
+Phase 1 (`assess`) reads Docker **metadata** only; it never touches the network,
+so its network findings (reachability, exposed ports, the PLC on the ICS net) are
+unverified claims. Phase 2 (`verify`) tests them on the wire with two active MCP
+servers — **NmapMCP** (reachability / service) and **modbus-mcp** (ICS protocol
+reads) — and records, per claim, `observed | not_reproduced | not_tested` plus the
+exact tool output.
+
+**Vantage point (Option A).** The nmap/modbus servers run as stdio subprocesses
+*inside the agent container*; to give them the kali network position, run `verify`
+with the agent container attached to the GRFICS ICS and DMZ networks:
+
+```bash
+docker compose -f deploy/agent/compose.yml \
+               -f deploy/agent/compose.grfics.example.yml \
+               run --rm agent verify
+```
+
+- `verify` reads the **latest** run's `agent_report.json` by default; pass
+  `--run run-YYYYMMDD-HHMMSS-XXXX` to verify a specific run, `--model` to pick a
+  profile.
+- nmap is gated to the lab subnets (`192.168.95.0/24`, `192.168.90.0/24`) and the
+  lab hostnames; modbus is pinned to `plc:502` (override with `GRFICS_PLC_HOST`).
+  Only Modbus **reads** are enabled this pass.
+- The report lands next to the Phase-1 report:
+  `outputs/<run_id>/verification_report.{json,md}` (copied to the Mac by `run.sh`,
+  like the other reports). It starts with the primary check — can kali reach
+  `plc:502`, and does a real Modbus device answer — then one block per claim with
+  the MCP tool calls logged beside each verdict.
+
+Phase 1 is untouched: `verify` only reads the Phase-1 report and writes a new one.
+
 ### 11. See every tool call the agent made
 
 ```bash

@@ -40,6 +40,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PATH=/opt/venv/bin:$PATH \
     HOME=/home/agent
 
+# Phase 2 (verify) MCP servers: where the baked clones live and the PLC target.
+# MODBUS_HOST is overridden per deployment (deploy/agent/compose.grfics.example.yml).
+ENV NMAPMCP_DIR=/opt/nmapmcp \
+    MODBUS_MCP_DIR=/opt/modbus-mcp \
+    MODBUS_TYPE=tcp \
+    MODBUS_HOST=plc \
+    MODBUS_PORT=502
+
 COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 
@@ -62,6 +70,19 @@ COPY config ./config
 COPY --from=trivy-plugin --chown=agent:agent /root/.trivy /home/agent/.trivy
 RUN mkdir -p /app/data /app/outputs && chown agent:agent /app/data /app/outputs
 
+# Phase 2 (verify): the nmap binary, plus pinned clones of the two active MCP
+# servers (not on PyPI, so they are baked in by commit rather than `uvx`-pinned).
+# NmapMCP (0xPratikPatil) and modbus-mcp (kukapay) are launched at runtime with
+# `uv --directory <dir> run ...`; their venvs are synced below as the agent user.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends nmap git \
+ && rm -rf /var/lib/apt/lists/* \
+ && git clone https://github.com/0xPratikPatil/NmapMCP.git /opt/nmapmcp \
+ && git -C /opt/nmapmcp checkout 0971a5221d6f0185c7e90ceaa31223cacfd752e5 \
+ && git clone https://github.com/kukapay/modbus-mcp.git /opt/modbus-mcp \
+ && git -C /opt/modbus-mcp checkout 0ac2c79be9de37fa59b887c9d164305219773f76 \
+ && chown -R agent:agent /opt/nmapmcp /opt/modbus-mcp
+
 USER agent
 
 # Pre-install the MCP servers so a run never downloads code:
@@ -76,6 +97,16 @@ USER agent
 RUN trivy plugin list | grep -q mcp \
  && uv python install 3.14.7 \
  && uvx --from docker-mcp-server==2.2.7 python -c "import docker_mcp" \
+ # Phase 2: install the two verify servers into their own venvs (fetches their
+ # managed CPythons: nmap 3.13, modbus 3.10). Each gets its OWN venv; the
+ # image-wide UV_PROJECT_ENVIRONMENT (/opt/venv) must be overridden or uv reuses it.
+ # mcp is pinned to 1.30.0: the servers' code is written for the mcp v1 API
+ # (mcp.server.fastmcp.FastMCP, renamed/removed in mcp 2.x), while their own locks
+ # pin 1.6.0 — too old to complete the MCP handshake with this image's client
+ # (mcp 2.3.0, via openai-agents). 1.30.0 is the newest v1 that keeps FastMCP AND
+ # interoperates with the 2.3.0 client. `uv add` re-resolves and installs the venv.
+ && UV_PROJECT_ENVIRONMENT=/opt/nmapmcp/.venv uv --directory /opt/nmapmcp add "mcp[cli]==1.30.0" \
+ && UV_PROJECT_ENVIRONMENT=/opt/modbus-mcp/.venv uv --directory /opt/modbus-mcp add "mcp[cli]==1.30.0" \
  && mkdir -p /home/agent/.cache/trivy /home/agent/.config/uv \
  && printf 'offline = true\npython-downloads = "never"\n' > /home/agent/.config/uv/uv.toml
 

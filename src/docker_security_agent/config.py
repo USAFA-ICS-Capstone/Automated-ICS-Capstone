@@ -139,7 +139,10 @@ class MCPServerConfig(BaseModel):
 
     name: str = ""  # filled in from the YAML key
     enabled: bool = True
-    role: Literal["docker_inspection", "image_scanner"]
+    # docker_inspection / image_scanner are Phase 1 (read-only). network_scanner
+    # (nmap) and ics_protocol (modbus) are the Phase 2 verification servers: they
+    # ACT on the network, so they are only ever built by `docker-audit verify`.
+    role: Literal["docker_inspection", "image_scanner", "network_scanner", "ics_protocol"]
     command: str
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
@@ -154,8 +157,22 @@ class ScanImagePolicy(BaseModel):
     forced_output_format: str = "json"
 
 
+class NmapScanPolicy(BaseModel):
+    """Keep the Phase 2 active nmap scans inside the lab (argument-level gate).
+
+    Unlike the read-only Phase 1 tools, nmap sends packets. A scan is refused
+    unless its ``target`` is an IP inside one of ``allowed_cidrs`` or a hostname
+    in ``allowed_hostnames`` (the lab container names). Logged either way.
+    """
+
+    restrict_targets: bool = True
+    allowed_cidrs: list[str] = Field(default_factory=list)
+    allowed_hostnames: list[str] = Field(default_factory=list)
+
+
 class ArgumentPolicy(BaseModel):
     scan_image: ScanImagePolicy = Field(default_factory=ScanImagePolicy)
+    nmap: NmapScanPolicy = Field(default_factory=NmapScanPolicy)
 
 
 class MCPConfig(BaseModel):

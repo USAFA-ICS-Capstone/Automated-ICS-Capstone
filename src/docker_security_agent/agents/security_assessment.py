@@ -37,6 +37,7 @@ from agents import Agent, FunctionTool, RunConfig, RunHooks, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded
 from agents.memory import Session
 from agents.run_config import CallModelInputFilter
+from pydantic import BaseModel
 
 from docker_security_agent import PROMPT_VERSION
 from docker_security_agent.llm.factory import ModelBundle
@@ -203,7 +204,9 @@ def build_input(objective: str) -> str:
 @dataclass
 class AgentRunOutcome:
     status: str  # ok / error / timeout / max_turns / invalid_output
-    assessment: AgentAssessment | None = None
+    # Usually an AgentAssessment; for the Phase-2 verify agent it holds that
+    # agent's output model instead (run_agent takes an ``output_model``).
+    assessment: Any = None
     raw_output: str = ""
     error: str | None = None
     duration_seconds: float = 0.0
@@ -226,8 +229,14 @@ def _usage_of(context_wrapper: Any) -> dict[str, int]:
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
-def parse_assessment_text(text: str) -> AgentAssessment:
-    """Parse a prompted-mode answer: tolerate <think> blocks and ```json fences."""
+def parse_assessment_text(
+    text: str, model: type[BaseModel] = AgentAssessment
+) -> BaseModel:
+    """Parse a prompted-mode answer: tolerate <think> blocks and ```json fences.
+
+    ``model`` is the Pydantic type to validate into (AgentAssessment for Phase 1;
+    the Phase-2 verify agent passes its own output model).
+    """
     cleaned = _THINK_RE.sub("", text).strip()
     fence = re.search(r"```(?:json)?\s*(\{.*\})\s*```", cleaned, re.DOTALL)
     if fence:
@@ -237,7 +246,7 @@ def parse_assessment_text(text: str) -> AgentAssessment:
         if start == -1 or end <= start:
             raise ValueError("no JSON object found in the model output")
         cleaned = cleaned[start : end + 1]
-    return AgentAssessment.model_validate_json(cleaned)
+    return model.model_validate_json(cleaned)
 
 
 """The run_agent() function is responsible for executing your AI agent, 
@@ -256,11 +265,14 @@ async def run_agent(
     tracing_enabled: bool,
     run_id: str,
     input_filter: CallModelInputFilter | None = None,
+    output_model: type[BaseModel] = AgentAssessment,
 ) -> AgentRunOutcome:
     """Run the SDK agent loop with limits; never raises for model problems.
 
     ``input_filter`` (h2: ``ContextFilter``) runs before every model call and
-    decides what of the conversation is sent.
+    decides what of the conversation is sent. ``output_model`` is the structured
+    output type to accept/parse (default AgentAssessment; the Phase-2 verify
+    agent passes its own).
     """
     started = time.perf_counter()
     outcome = AgentRunOutcome(status="error")
@@ -286,14 +298,14 @@ async def run_agent(
             )
         outcome.usage = _usage_of(result.context_wrapper)
         final = result.final_output
-        if isinstance(final, AgentAssessment):
+        if isinstance(final, output_model):
             outcome.assessment = final
             outcome.raw_output = final.model_dump_json()
             outcome.status = "ok"
         else:
             outcome.raw_output = str(final)
             try:
-                outcome.assessment = parse_assessment_text(outcome.raw_output)
+                outcome.assessment = parse_assessment_text(outcome.raw_output, output_model)
                 outcome.status = "ok"
             except Exception as exc:  # pydantic ValidationError / ValueError
                 outcome.status = "invalid_output"
