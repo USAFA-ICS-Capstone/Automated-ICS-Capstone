@@ -81,3 +81,15 @@ def test_trivy_results_are_readable_and_meta_is_dropped():
 def test_truncation_marker():
     text = to_text("x" * 500, 100)
     assert text.startswith("x" * 100) and "TRUNCATED: 400" in text
+
+
+def test_container_list_hides_the_agents_own_container():
+    """Prompt v10: the agent never sees its own container in container_list."""
+    from docker_security_agent.mcp.shaping import shape_result
+
+    items = [
+        {"Id": "a" * 64, "Names": ["/plc"], "Image": "fortiphyd/grfics-plc", "State": "running"},
+        {"Id": "b" * 64, "Names": ["/docker-audit-agent-run-20261110-155435"],
+         "Image": "docker-audit-agent:latest", "State": "running"},
+    ]
+    assert [c["name"] for c in shape_result("container_list", items)] == ["plc"]

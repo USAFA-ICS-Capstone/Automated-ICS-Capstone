@@ -1,0 +1,126 @@
+{
+  "report_version": "2.0",
+  "run_id": "run-20261110-155437-2e84",
+  "generated_at": "2026-11-10T15:59:27.984018Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "prompt_version": "v9",
+  "agent_status": "ok",
+  "snapshot_id": "snap-18000523abbceada",
+  "executive_summary": "The Docker environment hosts multiple ICS-related images but lacks running containers beyond the audit agent. Critical risks include non-internal bridge networks exposing ICS services to the host network and potential vulnerabilities in unscanned images. High-risk issues like missing resource limits and privilege escalation capabilities cannot be verified due to tool constraints.",
+  "overall_risk": "critical",
+  "findings": [
+    {
+      "id": "F-AGENT-622b15efd5",
+      "rule_id": "AGENT",
+      "title": "Non-Internal Bridge Networks",
+      "resource_type": "unknown",
+      "resource_name": "grficsv3_b-ics-net, grficsv3_c-dmz-net",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:network_inspect",
+          "resource": "grficsv3_b-ics-net, grficsv3_c-dmz-net",
+          "path": "Internal",
+          "value": "false",
+          "note": ""
+        },
+        {
+          "source": "agent:network_inspect",
+          "resource": "grficsv3_b-ics-net, grficsv3_c-dmz-net",
+          "path": "Driver",
+          "value": "bridge",
+          "note": ""
+        }
+      ],
+      "explanation": "Non-internal bridge networks allow containers to access the host's network stack, increasing attack surface. In OT environments, this could enable lateral movement between ICS and DMZ networks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-47ff110f5e",
+      "rule_id": "AGENT",
+      "title": "Unscanned ICS Images",
+      "resource_type": "unknown",
+      "resource_name": "ics_range-attacker:latest, ics_range-process-simulator:latest",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:image_list",
+          "resource": "ics_range-attacker:latest, ics_range-process-simulator:latest",
+          "path": "Tags",
+          "value": "ics_range-attacker:latest",
+          "note": ""
+        },
+        {
+          "source": "agent:image_list",
+          "resource": "ics_range-attacker:latest, ics_range-process-simulator:latest",
+          "path": "Tags",
+          "value": "ics_range-process-simulator:latest",
+          "note": ""
+        }
+      ],
+      "explanation": "Critical ICS components cannot be assessed for vulnerabilities due to policy restrictions. Unpatched software in these images could allow exploitation of known ICS protocol weaknesses.",
+      "remediation": "",
+      "references": []
+    }
+  ],
+  "limitations": [
+    "Failed to scan ics_range-attacker:latest and ics_range-process-simulator:latest due to policy restrictions",
+    "No running containers to assess runtime configurations",
+    "Unable to verify container resource limits and capability restrictions"
+  ],
+  "errors": [],
+  "metrics": {
+    "started_at": "2026-11-10T15:54:37.062600Z",
+    "finished_at": "2026-11-10T15:59:27.966970Z",
+    "duration_seconds": 290.92,
+    "collection_seconds": 0.83,
+    "scan_seconds": 36.32,
+    "agent_seconds": 251.83,
+    "tool_calls_total": 476,
+    "tool_calls_agent": 14,
+    "tool_calls_blocked": 2,
+    "tool_calls_by_name": {
+      "docker.system_version": 1,
+      "docker.container_list": 3,
+      "docker.image_list": 2,
+      "docker.network_list": 2,
+      "docker.volume_list": 1,
+      "trivy.trivy_version": 1,
+      "trivy.scan_image": 13,
+      "trivy.findings_list": 451,
+      "docker.network_inspect": 2
+    },
+    "model_requests": 6,
+    "input_tokens": 72858,
+    "output_tokens": 7841,
+    "total_tokens": 80699
+  }
+}

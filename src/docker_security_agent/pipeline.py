@@ -34,7 +34,6 @@ Modes
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import secrets
 import time
@@ -57,6 +56,7 @@ from docker_security_agent.agents.security_assessment import (
 )
 from docker_security_agent.config import ConfigError, Settings
 from docker_security_agent.inventory.baseline import (
+    AUDIT_RESOURCE_PREFIX,
     RangeBaseline,
     latest_reset,
     load_baseline,
@@ -579,13 +579,6 @@ async def _agent_phase(
     run_id: str,
     session_id: str,
 ) -> AgentRunOutcome:
-    # Only the names of excluded infrastructure (the agent's own container) are
-    # passed on, so the agent does not report the assessment tooling itself.
-    out_of_scope = [
-        c.name
-        for c in snapshot.containers
-        if any(fnmatch.fnmatchcase(c.name, p) for p in settings.rules.ignore_containers)
-    ]
     limits = settings.agent.limits
     # Harness h2: every full tool result is stored under a reference as it is
     # produced; the agent can fetch results back and records one section per
@@ -597,7 +590,17 @@ async def _agent_phase(
         agent = build_agent(
             bundle,
             mcp_servers=mcp_servers,
-            tools=build_harness_tools(store, recorder, limits.max_tool_result_chars),
+            tools=build_harness_tools(
+                store,
+                recorder,
+                limits.max_tool_result_chars,
+                # h5: the section tool says which running containers are still left
+                checklist=[
+                    c.name
+                    for c in snapshot.containers
+                    if c.running and not c.name.startswith(AUDIT_RESOURCE_PREFIX)
+                ],
+            ),
         )
         _say(
             opts,
@@ -608,7 +611,7 @@ async def _agent_phase(
         )
         outcome = await run_agent(
             agent,
-            build_input(objective, out_of_scope),
+            build_input(objective),
             max_turns=limits.max_turns,
             timeout_seconds=limits.max_duration_seconds,
             session=open_session(session_id, settings.session_db_path),

@@ -47,7 +47,17 @@ __version__ = "0.1.0"
 #        recommendations list (analysts decide fixes); step 4's combinations are
 #        examples, not an exhaustive list: also report weaknesses known from training;
 #        no fixed tool-call estimate per container (budget raised in agent.yaml)
-PROMPT_VERSION = "v9"
+#   v10 - the user prompt no longer names the agent's own container (the model used
+#         the name as a container_list filter and saw only itself); the harness
+#         leaves that container out of container_list results instead
+#   v11 - image vulnerabilities: up to 5 of the most exploitable per container, one
+#         finding each with exactly one CVE/GHSA ID, its package and why it is
+#         exploitable here (long ID lists made the model repeat itself and stall)
+#   v12 - aim for 5 vulnerability findings (CRITICAL first); they come in addition to
+#         the configuration findings, which carry no CVE IDs; the executive summary
+#         has a fixed structure (risk and reason, attack paths, affected ICS assets,
+#         what could not be assessed)
+PROMPT_VERSION = "v12"
 
 # Bumped whenever the harness around the agent changes what the model sees or
 # can do, independently of the prompt text. Recorded in every run manifest.
@@ -63,4 +73,12 @@ PROMPT_VERSION = "v9"
 #        the model, the evidence store, the database and the reports unmodified
 #   h4 - no read-only proxy: the tools have full Docker access. Containment instead:
 #        the agent runs in a container and Docker Desktop shares no Mac folders
-HARNESS_VERSION = "h4"
+#   h5 - one tool call per model reply (parallel_tool_calls false) and a queue per
+#        MCP server (calls run one at a time: trivy-mcp crashed on parallel scans);
+#        the agent's own container is left out of container_list results;
+#        record_container_section answers with the containers still left, and
+#        "all N have a section ... produce the final assessment" after the last;
+#        write-time check: a section whose CVE IDs are not in that container's own
+#        Trivy results (or that puts CVEs on a configuration finding) is not saved,
+#        and the agent is told what to fix (after 2 tries the bad IDs are removed)
+HARNESS_VERSION = "h5"

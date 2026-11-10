@@ -48,7 +48,10 @@ class AgentFinding(BaseModel):
     severity: Literal["critical", "high", "medium", "low", "info"]
     evidence: list[AgentEvidence]
     vulnerability_ids: list[str] = Field(
-        description="CVE/GHSA IDs copied from Trivy findings for this resource; [] otherwise"
+        description=(
+            "The ONE CVE/GHSA ID of this vulnerability finding, copied from Trivy "
+            "findings for this resource; [] for other findings"
+        )
     )
     explanation: str = Field(description="Why this matters in an OT/ICS context")
 

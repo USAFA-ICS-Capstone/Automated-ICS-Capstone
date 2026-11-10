@@ -12,7 +12,8 @@ Every tool call goes through the same pipeline::
     [0] EvidenceStore.find      -> (agent, h2) exact repeat? answer with its reference
     [1] ToolPolicy.check        -> refuse unapproved tools / bad arguments
     [2] budget check            -> refuse when the agent is out of tool calls
-    [3] MCPServerStdio.call_tool-> the real MCP request (stdio subprocess)
+    [3] MCPServerStdio.call_tool-> the real MCP request (stdio subprocess), one at a
+                                   time per server (h5 queue)
     [4] ToolCallRecorder.add    -> metrics + SQLite audit trail
     [5] EvidenceStore.add       -> (agent, h2) store the full result as E<n>
     [6] shape_result + to_text  -> (agent only) lossless compaction, cap at a line
@@ -39,6 +40,7 @@ environment (e.g. OPENAI_API_KEY) are NOT inherited by MCP servers.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -104,6 +106,9 @@ class GuardedMCPServer(MCPServerStdio):
         self.max_result_chars = max_result_chars
         # Set by the pipeline for the agent phase (harness h2); None = h1 behaviour.
         self.evidence: EvidenceStore | None = None
+        # Harness h5: calls to this server wait in line, one at a time. trivy-mcp
+        # crashes ("concurrent map writes") when it gets several scans at once.
+        self._queue = asyncio.Lock()
 
     # ------------------------------------------------------------------ SDK path
 
@@ -207,7 +212,8 @@ class GuardedMCPServer(MCPServerStdio):
         # [3] the real MCP call
         started = time.perf_counter()
         try:
-            raw = await super().call_tool(tool_name, decision.arguments, meta)
+            async with self._queue:
+                raw = await super().call_tool(tool_name, decision.arguments, meta)
         except Exception as exc:  # transport errors, MCP errors, timeouts
             message = f"{type(exc).__name__}: {exc}"
             self.recorder.add(

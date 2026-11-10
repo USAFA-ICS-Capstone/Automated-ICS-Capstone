@@ -8,9 +8,10 @@ import pytest
 from agents.run_config import CallModelData, ModelInputData
 
 from docker_security_agent.agents.context_filter import ContextFilter
-from docker_security_agent.agents.harness_tools import render_stored
+from docker_security_agent.agents.harness_tools import build_harness_tools, render_stored
 from docker_security_agent.agents.security_assessment import AgentRunOutcome, merge_sections
 from docker_security_agent.mcp.evidence import EvidenceStore
+from docker_security_agent.mcp.recorder import ToolCallRecorder
 from docker_security_agent.mcp.shaping import (
     INSPECT_NOISE,
     inspect_lines,
@@ -356,3 +357,105 @@ def test_no_sections_no_assessment():
     outcome = AgentRunOutcome(status="error")
     merge_sections(outcome, [])
     assert outcome.assessment is None
+
+
+def test_model_settings_ask_for_one_tool_call_per_reply():
+    """Harness h5: no parallel tool calls."""
+    from docker_security_agent.config import load_settings
+    from docker_security_agent.llm.factory import _model_settings
+
+    profile = load_settings().get_profile("local-vllm")
+    assert _model_settings(profile).parallel_tool_calls is False
+
+
+def test_section_reply_names_what_is_left_and_ends_with_final_assessment():
+    """h5: after the last container the reply says to write the final assessment."""
+    from docker_security_agent.agents.harness_tools import section_progress
+    from docker_security_agent.mcp.evidence import EvidenceStore
+    from docker_security_agent.schemas.reports import ContainerSection
+
+    store = EvidenceStore("t")
+    checklist = ["router", "plc"]
+
+    def save(name):
+        store.save_section(
+            ContainerSection(resource_name=name, findings=[], evidence_refs=[], notes=[])
+        )
+
+    save("router")
+    msg = section_progress(store, checklist)
+    assert "1 of 2" in msg and "Still to do: plc" in msg
+    save("plc")
+    msg = section_progress(store, checklist)
+    assert "All 2 running containers now have a section" in msg
+    assert "produce the final assessment" in msg and "next" not in msg
+
+
+def _scanned_store():
+    """caldera's image has CVE-2023-24538; kali's scan (by image ID) found nothing."""
+    from docker_security_agent.mcp.evidence import EvidenceStore
+
+    store = EvidenceStore("t")
+    for name, image, image_id in (
+        ("caldera", "fortiphyd/grfics-caldera", "sha256:" + "a7a3edc9ef16" + "0" * 52),
+        ("kali", "fortiphyd/grfics-attacker", "sha256:" + "6cd239bfad70" + "0" * 52),
+    ):
+        store.add("docker", "container_inspect", {"id_or_name": name},
+                  [{"Name": "/" + name, "Image": image_id, "Config": {"Image": image}}])
+    store.add("trivy", "scan_image", {"target": "fortiphyd/grfics-caldera:latest"},
+              [{"batch_id": "b-caldera"}])
+    store.add("trivy", "findings_list", {"batchID": "b-caldera"},
+              [{"findings": [{"id": "CVE-2023-24538", "s": 4, "an": "stdlib"}]}])
+    store.add("trivy", "scan_image", {"target": "6cd239bfad70"}, [{"batch_id": "b-kali"}])
+    store.add("trivy", "findings_list", {"batchID": "b-kali"}, [{"findings": []}])
+    return store
+
+
+def _vf(title, ids, tool="findings_list"):
+    return AgentFinding(title=title, resource_name="x", severity="high",
+                        evidence=[AgentEvidence(tool=tool, field="f", value="v")],
+                        vulnerability_ids=ids, explanation="e")
+
+
+def test_check_section_catches_ids_copied_from_another_container():
+    """h5 write-time check, replaying run-20261110-201239-e7e1 (kali got caldera's IDs)."""
+    from docker_security_agent.agents.harness_tools import check_section
+
+    store = _scanned_store()
+    assert check_section(store, "caldera", [_vf("ok", ["CVE-2023-24538"])])[0] == []
+
+    problems, cleaned = check_section(store, "kali", [_vf("copied", ["CVE-2023-24538"])])
+    assert len(problems) == 1 and "not in kali's own Trivy results" in problems[0]
+    assert cleaned[0].vulnerability_ids == []
+
+    problems, _ = check_section(
+        store, "caldera", [_vf("Docker socket", ["CVE-2023-24538"], tool="container_inspect")]
+    )
+    assert "configuration finding" in problems[0]
+
+
+async def test_section_is_rejected_then_saved_without_bad_ids():
+    from agents.tool_context import ToolContext
+
+    store = _scanned_store()
+    recorder = ToolCallRecorder(20)
+    tool = {t.name: t for t in build_harness_tools(store, recorder, 4000, checklist=["kali"])}[
+        "record_container_section"
+    ]
+    args = json.dumps({
+        "resource_name": "kali",
+        "findings": [_vf("copied", ["CVE-2023-24538"]).model_dump()],
+        "evidence_refs": ["E6"], "notes": [],
+    })
+
+    async def call():
+        ctx = ToolContext(context=None, tool_name=tool.name, tool_call_id="c", tool_arguments=args)
+        return await tool.on_invoke_tool(ctx, args)
+
+    for _ in range(2):
+        assert "NOT saved" in await call()
+        assert "kali" not in store.sections
+    reply = await call()  # third try: saved, wrong IDs removed
+    assert "Wrong CVE IDs were removed" in reply
+    assert store.sections["kali"].findings[0].vulnerability_ids == []
+    assert any("removed CVE IDs" in n for n in store.sections["kali"].notes)

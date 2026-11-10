@@ -138,7 +138,7 @@ async def test_harness_h2_in_the_agent_loop(fake_mcp_settings, tmp_path):
         )
         outcome = await run_agent(
             agent,
-            build_input("assess", []),
+            build_input("assess"),
             max_turns=10,
             timeout_seconds=60,
             session=None,
@@ -199,7 +199,7 @@ async def test_agent_uses_only_mcp_tools(fake_mcp_settings, tmp_path):
         assert agent.tools == []  # no function tools: no access to deterministic results
         outcome = await run_agent(
             agent,
-            build_input("assess", ["docker-audit-socket-proxy"]),
+            build_input("assess"),
             max_turns=10,
             timeout_seconds=60,
             session=session,
@@ -215,7 +215,7 @@ async def test_agent_uses_only_mcp_tools(fake_mcp_settings, tmp_path):
     ]
     # The first message holds no inventory and no findings.
     first = str(model.calls[0].input)
-    assert "OUT OF SCOPE: docker-audit-socket-proxy" in first
+    assert first.count("OBJECTIVE: assess") == 1 and "OUT OF SCOPE" not in first
     assert "finding" not in first.lower() and "simulation" not in first
     # h3: the model sees credential values as they are (no redaction).
     tool_output = str(model.calls[2].input)
@@ -439,8 +439,8 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     exp = m["experiment"]
     assert exp["scenario_id"] == settings.experiment.scenario_id
     assert exp["evidence"]["snapshot_id"] == result.report.snapshot_id
-    assert exp["prompt_bundle"]["version"] == "v9"
-    assert exp["prompt_bundle"]["harness_version"] == "h4"
+    assert exp["prompt_bundle"]["version"] == "v12"
+    assert exp["prompt_bundle"]["harness_version"] == "h5"
     assert exp["agent"]["keep_recent_tool_outputs"] == 8
     assert exp["schema_versions"]["db_schema_version"] >= 4
     assert exp["models"]["assessment_agent"]["model"] == "scripted"

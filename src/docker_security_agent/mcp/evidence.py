@@ -22,6 +22,7 @@ Without a database path (tests) the store is in memory only.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -50,6 +51,20 @@ def _image_names(ref: str) -> set[str]:
     """``repo/name`` and ``repo/name:latest`` refer to the same image."""
     ref = ref.strip().lower()
     return {ref, ref.removesuffix(":latest")} if ref.endswith(":latest") else {ref, ref + ":latest"}
+
+
+_VULN_ID_RE = re.compile(r"\b(?:CVE-\d{4}-\d{4,}|GHSA(?:-[0-9a-z]{4}){3})\b", re.IGNORECASE)
+
+
+def _same_image(target: str, images: set[str]) -> bool:
+    """A scan target (tag, or full/short image ID) names one of these images."""
+    t = target.strip().lower().removeprefix("sha256:")
+    if not t:
+        return False
+    if _image_names(t) & images:
+        return True
+    ids = {i.removeprefix("sha256:") for i in images if i.startswith("sha256:")}
+    return len(t) >= 12 and any(i.startswith(t) for i in ids)
 
 
 @dataclass
@@ -168,7 +183,30 @@ class EvidenceStore:
                     image = str((doc.get("Config") or {}).get("Image") or "")
                     if image:
                         images.setdefault(name, set()).update(_image_names(image))
+                    image_id = str(doc.get("Image") or "").lower()  # sha256:...
+                    if image_id.startswith("sha256:"):
+                        images.setdefault(name, set()).add(image_id)
         return images
+
+    def scan_ids_for(self, container: str) -> set[str] | None:
+        """CVE/GHSA IDs in the Trivy findings_list results of this container's image.
+
+        None when no findings_list result for its image is stored (nothing to check
+        against). Used by record_container_section's write-time check (h5).
+        """
+        images = self._container_images().get(container.strip().lstrip("/").lower())
+        if not images:
+            return None
+        pages = [
+            out
+            for out in self.outputs.values()
+            if out.tool == "findings_list" and _same_image(out.subject, images)
+        ]
+        if not pages:
+            return None
+        return {
+            m.upper() for out in pages for m in _VULN_ID_RE.findall(json.dumps(out.items))
+        }
 
     def section_for(self, stored: StoredOutput) -> str | None:
         """Name of the written section that covers this result, if any."""
@@ -178,8 +216,7 @@ class EvidenceStore:
         if subject in self.sections:
             return self.sections[subject].resource_name
         if stored.tool in ("scan_image", "findings_list", "image_inspect"):
-            targets = _image_names(subject)
             for container, images in self._container_images().items():
-                if container in self.sections and images & targets:
+                if container in self.sections and _same_image(subject, images):
                     return self.sections[container].resource_name
         return None

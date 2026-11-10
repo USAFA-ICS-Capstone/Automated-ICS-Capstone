@@ -37,7 +37,9 @@ class ModelBundle:
 
 
 def _model_settings(profile: ModelProfile) -> ModelSettings:
-    kwargs = {}
+    # One tool call per model reply (harness h5): the agent works step by step,
+    # and scans are not sent all at once (see GuardedMCPServer's queue).
+    kwargs: dict = {"parallel_tool_calls": False}
     if profile.temperature is not None:
         kwargs["temperature"] = profile.temperature
     if profile.max_tokens is not None:

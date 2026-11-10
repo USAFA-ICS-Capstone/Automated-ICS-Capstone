@@ -33,6 +33,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from docker_security_agent.inventory.baseline import AUDIT_RESOURCE_PREFIX
+
 # Recorded in run manifests: bump when the shaped form changes.
 SHAPING_VERSION = "s2"
 
@@ -318,11 +320,18 @@ def _volume_summary(item: dict[str, Any]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _is_audit_container(item: dict[str, Any]) -> bool:
+    names = item.get("Names") or []
+    return any(n.lstrip("/").startswith(AUDIT_RESOURCE_PREFIX) for n in names)
+
+
 def shape_result(tool: str, items: list[Any]) -> Any:
     """Return an LLM-friendly version of a tool result (list of parsed JSON items)."""
     dicts = [i for i in items if isinstance(i, dict)]
     if tool == "container_list":
-        return [_container_summary(i) for i in dicts]
+        # The agent's own container (docker-audit-agent-*) is left out, so the agent
+        # never sees or reports the assessment tooling (prompt v10).
+        return [_container_summary(i) for i in dicts if not _is_audit_container(i)]
     if tool == "image_list":
         return [_image_summary(i) for i in dicts]
     if tool == "network_list":

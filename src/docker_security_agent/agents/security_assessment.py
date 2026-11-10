@@ -81,7 +81,16 @@ WORKFLOW (you decide which tools to call, in what order, and when to stop)
    b. Check its image for known vulnerabilities with Trivy: scan_image on the image
       (use its tag, e.g. "repo/name:latest"), then findings_list with the returned
       batchID (minSeverity "HIGH" keeps results smaller; findings are grouped by
-      package).
+      package). From these results, report UP TO 5 of the most exploitable
+      vulnerabilities, CRITICAL first, ONE FINDING EACH: exactly one CVE/GHSA ID, the
+      affected package and version, and why it is exploitable in this container (e.g.
+      the package serves a published port, or the container controls the ICS process).
+      Aim for 5; report fewer only when the scan has fewer that matter for this
+      container. Do not list the other CVEs: the full scan stays in the deterministic
+      report.
+      These vulnerability findings come IN ADDITION to the configuration findings from
+      step a (capabilities, user, ports, mounts, networks, credentials), not instead of
+      them. Configuration findings have no CVE IDs (vulnerability_ids []).
    c. Right away, while its results are still in front of you, call
       record_container_section for that container with every issue you found on it.
    Then move on to the next container. Do not stop after the first container that has
@@ -108,11 +117,15 @@ WORKFLOW (you decide which tools to call, in what order, and when to stop)
    produced the value (the original tool, e.g. container_inspect, also when you read it
    through evidence_get), the field path in its output (e.g. HostConfig.Privileged,
    Mounts[0].Source, NetworkSettings.Networks) and the value you saw. For image
-   vulnerabilities, put the CVE/GHSA IDs from findings_list in vulnerability_ids
-   (otherwise []).
+   vulnerabilities, put that finding's single CVE/GHSA ID from findings_list in
+   vulnerability_ids (otherwise []).
 7. Produce the final assessment:
-   - executive_summary: 3-6 sentences for a defender, OT-aware (availability and
-     integrity of the physical process come first).
+   - executive_summary: 4-6 sentences for a security analyst, OT-aware (availability
+     and integrity of the physical process come first): (1) the overall risk and its
+     main reason; (2) the most dangerous attack paths to the physical process,
+     combining findings across containers; (3) which high-value ICS assets (PLC, HMI,
+     simulation, router) are affected; (4) what could not be assessed. No remediation
+     advice.
    - overall_risk: critical/high/medium/low.
    - findings: ONLY issues that are not in a container section (network-level issues
      and cross-container combinations), most urgent first. The findings of your
@@ -165,43 +178,21 @@ def build_agent(
     )
 
 
-"""
-Example of an output of this function
-lines = [
-    "OBJECTIVE: Assess Docker security",
-    "",
-    "OUT OF SCOPE: docker-audit-agent-agent-run-1a2b (assessment infrastructure: the "
-    "audit's own agent container). Do not report it.",
-    "",
-    "Investigate the Docker environment with your tools, then produce the final "
-    "assessment as specified in your instructions."
-]"""
-
-
 # USER PROMPT (the first and only user message; the SDK calls it the run's "input").
-# The objective comes from config/experiment.yaml.
-def build_input(objective: str, out_of_scope: list[str]) -> str:
-    """The first user message: the objective and what is out of scope.
+# The objective comes from config/experiment.yaml. The agent's own container is not
+# named here (prompt v10): the harness removes it from container_list results.
+def build_input(objective: str) -> str:
+    """The first user message: the objective only.
 
     Deliberately nothing else: no inventory summary and no findings. The agent
     must discover the environment with its tools, which is what makes its
     tool use and its findings comparable across models.
     """
-    lines = [f"OBJECTIVE: {objective.strip()}"]
-    if out_of_scope:
-        lines += [
-            "",
-            "OUT OF SCOPE: "
-            + ", ".join(sorted(out_of_scope))
-            + " (assessment infrastructure: the audit's own agent container). "
-            "Do not report it.",
-        ]
-    lines += [
-        "",
+    return (
+        f"OBJECTIVE: {objective.strip()}\n\n"
         "Investigate the Docker environment with your tools, then produce the final "
-        "assessment as specified in your instructions.",
-    ]
-    return "\n".join(lines)
+        "assessment as specified in your instructions."
+    )
 
 
 # ---------------------------------------------------------------------------
