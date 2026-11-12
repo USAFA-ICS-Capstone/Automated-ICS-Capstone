@@ -57,7 +57,11 @@ __version__ = "0.1.0"
 #         the configuration findings, which carry no CVE IDs; the executive summary
 #         has a fixed structure (risk and reason, attack paths, affected ICS assets,
 #         what could not be assessed)
-PROMPT_VERSION = "v12"
+#   v13 - every number, package or IP in the executive summary must come from the
+#         recorded sections, named with its container (or be left out); limitations
+#         and section notes hold only what could not be checked, not the CVEs the
+#         agent was told not to list (it mixed numbers between containers there)
+PROMPT_VERSION = "v13"
 
 # Bumped whenever the harness around the agent changes what the model sees or
 # can do, independently of the prompt text. Recorded in every run manifest.

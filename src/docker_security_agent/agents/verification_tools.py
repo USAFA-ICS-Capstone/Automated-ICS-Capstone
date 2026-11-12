@@ -32,6 +32,12 @@ RECORD_VERIFICATION = "record_verification"
 
 _FINDING_ID_RE = re.compile(r"F-AGENT-[0-9a-f]+", re.IGNORECASE)
 
+# h6: how many record_verification calls may pass without the set of still-unverified
+# claims shrinking before the tool forces the agent to wrap up. Keeps a few claims the
+# model cannot crack (e.g. a CVE it has no tool for) from jamming the all-or-nothing
+# exit gate and burning the whole turn budget on re-recording covered claims.
+_STALL_LIMIT = 8
+
 
 @dataclass
 class VerificationCollector:
@@ -100,6 +106,10 @@ def build_verification_tools(
     ``checklist``: the Phase-1 finding ids the agent has to work through; the
     record tool's reply says which still lack a verdict (h5-style progress).
     """
+
+    # h6 stall state: the last set of still-unverified ids and how many record
+    # calls in a row have left it unchanged. Shared across record_verification calls.
+    stall: dict[str, object] = {"sig": None, "n": 0}
 
     @function_tool(name_override=EVIDENCE_GET)
     async def evidence_get(ref: str, select: str = "") -> str:
@@ -194,6 +204,39 @@ def build_verification_tools(
                 "produce ONLY your executive_summary and limitations as the final answer "
                 "(the verdicts are added to the report automatically)."
             )
-        return f"{head} {verification_progress(collector, checklist)}"
+
+        # Progress + stall detection (h6). Recompute the remaining set so we can tell
+        # whether this call actually moved the needle.
+        want = [c.strip().upper() for c in checklist]
+        remaining = [c for c in want if c not in collector.covered_ids()]
+        sig = tuple(remaining)
+        if sig == stall["sig"]:
+            stall["n"] = int(stall["n"]) + 1  # type: ignore[arg-type]
+        else:
+            stall["sig"] = sig
+            stall["n"] = 0
+
+        if not remaining:
+            return f"{head} {verification_progress(collector, checklist)}"
+
+        # Fix 1: re-recording a claim that already has a verdict is a dead end. Say so
+        # plainly so the model stops looping on covered claims (mirrors Phase 1's
+        # "do not record them again").
+        dead_end = (
+            "You already recorded this claim — do NOT record it again. " if again else ""
+        )
+
+        # Fix 2: escape hatch. If the same claims have stayed unverified for too many
+        # record calls, the model cannot crack them; tell it to stop and wrap up. Any
+        # claim still without a verdict is filled in as not_tested by the pipeline.
+        if int(stall["n"]) >= _STALL_LIMIT:  # type: ignore[arg-type]
+            shown = ", ".join(remaining[:8]) + (" ..." if len(remaining) > 8 else "")
+            return (
+                f"{head} {dead_end}You have tried enough — the remaining claim(s) ({shown}) "
+                "cannot be verified with nmap/modbus. Do NOT record anything else. Produce "
+                "your final answer NOW: ONLY the executive_summary and limitations. Any claim "
+                "still without a verdict is recorded as not_tested automatically."
+            )
+        return f"{head} {dead_end}{verification_progress(collector, checklist)}"
 
     return [evidence_get, record_verification]

@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from docker_security_agent.agents.verification_tools import (
+    VerificationCollector,
+    verification_progress,
+)
 from docker_security_agent.mcp.policy import ToolPolicy
 from docker_security_agent.reporting.verification_report import (
     build_verification_report,
@@ -15,12 +19,10 @@ from docker_security_agent.schemas.verification import (
     VerificationRecord,
     VerificationToolCall,
 )
-from docker_security_agent.agents.verification_tools import (
-    VerificationCollector,
-    verification_progress,
+from docker_security_agent.verification_pipeline import (
+    fill_missing_as_not_tested,
+    network_claims,
 )
-from docker_security_agent.verification_pipeline import network_claims
-
 
 # --------------------------------------------------------------------------- policy
 
@@ -120,6 +122,40 @@ def test_progress_tracks_remaining_then_finalises():
     assert "All 3" in done
     # the finalise message must steer the model to a summary-only answer
     assert "executive_summary" in done and "automatically" in done
+
+
+# ------------------------------------------------------------------ escape hatch (h6)
+
+
+def test_fill_missing_records_unreached_claims_as_not_tested():
+    # Two of three claims verified; the third was never reached by the agent.
+    claim_by_id = {
+        "F-AGENT-1": "[F-AGENT-1] port on plc",
+        "F-AGENT-2": "[F-AGENT-2] port on caldera",
+        "F-AGENT-3": "[F-AGENT-3] CVE in perl-base on router",
+    }
+    c = VerificationCollector()
+    c.add(_rec("port on plc", "F-AGENT-1"))
+    c.add(_rec("port on caldera", "F-AGENT-2"))
+
+    missed = fill_missing_as_not_tested(c, claim_by_id)
+
+    assert missed == ["F-AGENT-3"]
+    # the report now covers the full checklist...
+    assert len(c.as_list()) == 3
+    filled = c.records["[f-agent-3] cve in perl-base on router"]
+    # ...and the unreached claim is clearly not_tested, never a false negative
+    assert filled.verified == "not_tested"
+    assert filled.source_finding_id == "F-AGENT-3"
+    assert "did not reach" in filled.notes.lower()
+
+
+def test_fill_missing_is_a_noop_when_all_covered():
+    claim_by_id = {"F-AGENT-1": "[F-AGENT-1] port on plc"}
+    c = VerificationCollector()
+    c.add(_rec("port on plc", "F-AGENT-1"))
+    assert fill_missing_as_not_tested(c, claim_by_id) == []
+    assert len(c.as_list()) == 1
 
 
 # --------------------------------------------------------------------------- report

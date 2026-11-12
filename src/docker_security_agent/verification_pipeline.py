@@ -54,7 +54,10 @@ from docker_security_agent.reporting.verification_report import (
     write_verification_report,
 )
 from docker_security_agent.schemas.reports import MCPServerInfo, ModelInfo, RunMetrics
-from docker_security_agent.schemas.verification import VerificationAgentOutput
+from docker_security_agent.schemas.verification import (
+    VerificationAgentOutput,
+    VerificationRecord,
+)
 
 PHASE2_ROLES = {"network_scanner", "ics_protocol"}
 
@@ -144,6 +147,31 @@ def _finding_is_network(finding: dict) -> bool:
         ]
     ).lower()
     return any(k in haystack for k in _NET_KEYWORDS)
+
+
+def fill_missing_as_not_tested(
+    collector: VerificationCollector, claim_by_id: dict[str, str]
+) -> list[str]:
+    """h6 escape hatch: give every checklist claim the agent never reached a
+    ``not_tested`` verdict, so the report always covers the full checklist even when
+    the agent runs out of turns. Returns the ids that were filled in. These are
+    flagged in their notes so they are never read as a tested-and-negative result.
+    """
+    covered = collector.covered_ids()
+    missed = [fid for fid in claim_by_id if fid.upper() not in covered]
+    for fid in missed:
+        collector.add(
+            VerificationRecord(
+                claim=claim_by_id[fid],
+                source_finding_id=fid,
+                verified="not_tested",
+                assertion_type="inferred",
+                evidence="",
+                tool_calls=[],
+                notes="Agent did not reach this claim before finishing.",
+            )
+        )
+    return missed
 
 
 def network_claims(report_json: dict) -> list[str]:
@@ -249,6 +277,13 @@ async def run_verification(settings: Settings, opts: VerifyOptions) -> VerifyRes
         # h5-style checklist: the Phase-1 finding ids the agent must give a verdict
         # on. record_verification's reply reports which still remain.
         checklist = _FINDING_ID_RE.findall(" ".join(claims))
+        # id -> its claim text, so a claim the agent never reaches can be filled in
+        # as not_tested after the run (h6 escape hatch, below).
+        claim_by_id: dict[str, str] = {}
+        for c in claims:
+            m = _FINDING_ID_RE.search(c)
+            if m:
+                claim_by_id.setdefault(m.group(0).upper(), c)
         agent = build_verify_agent(
             bundle,
             mcp_servers=active,
@@ -283,6 +318,15 @@ async def run_verification(settings: Settings, opts: VerifyOptions) -> VerifyRes
             output = outcome.assessment
         if outcome_error:
             errors.append(f"agent: {outcome_error}")
+
+    # 3b. h6 escape hatch: any Phase-1 claim the agent never gave a verdict on is
+    # recorded as not_tested, so the report always covers the full checklist even if
+    # the agent ran out of turns on a few stubborn claims.
+    missed = fill_missing_as_not_tested(collector, claim_by_id)
+    if missed:
+        errors.append(
+            f"{len(missed)} claim(s) the agent did not reach were recorded as not_tested."
+        )
 
     # 4. metrics + report
     metrics = RunMetrics(

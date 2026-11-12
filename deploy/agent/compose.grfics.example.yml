@@ -1,11 +1,18 @@
 # ---------------------------------------------------------------------------
-# Phase 2 (network verification) vantage point — "Option A".
+# Phase 2 (network verification) vantage point — "Option A", Kali-faithful.
 #
 # NOT loaded by default (Compose ignores this file unless it is passed with
-# -f). It attaches the agent container to the existing GRFICSv3 networks so the
-# nmap/modbus MCP servers — which run as stdio subprocesses INSIDE the agent
-# container — probe the PLC from the same network segments as the kali
-# container, without running anything inside kali.
+# -f). It attaches the agent container to EXACTLY the networks the kali
+# container is on — the DMZ and the admin bridge — so the nmap/modbus MCP
+# servers (stdio subprocesses INSIDE the agent container) probe the PLC from
+# the same vantage point a DMZ attacker has, without running anything inside
+# kali.
+#
+# Deliberately NOT on the ICS network (b-ics-net): giving the agent a direct
+# interface on the plant floor would let it reach the PLC without crossing the
+# DMZ->ICS boundary, which is the very thing under test. On this bridge lab the
+# PLC's hostname ("plc") resolves to its admin-bridge IP, so the agent reaches
+# plc:502 over the shared admin bridge exactly as kali does.
 #
 #   docker compose -f deploy/agent/compose.yml \
 #                  -f deploy/agent/compose.grfics.example.yml \
@@ -24,8 +31,8 @@ services:
   agent:
     networks:
       default: {}
-      grfics-ics: {}   # 192.168.95.0/24 — the PLC / Modbus (502) segment
-      grfics-dmz: {}   # 192.168.90.0/24
+      grfics-dmz: {}     # 192.168.90.0/24 — the DMZ, where kali lives
+      grfics-admin: {}   # 172.18.0.0/16  — the admin bridge, kali's other interface
     environment:
       # Point the modbus MCP server at the PLC on the ICS network. Use the
       # GRFICS service name (Docker DNS) or the PLC's static IP.
@@ -34,9 +41,9 @@ services:
       MODBUS_TYPE: tcp
 
 networks:
-  grfics-ics:
-    external: true
-    name: ${GRFICS_ICS_NETWORK:-grficsv3_b-ics-net}
   grfics-dmz:
     external: true
     name: ${GRFICS_DMZ_NETWORK:-grficsv3_c-dmz-net}
+  grfics-admin:
+    external: true
+    name: ${GRFICS_ADMIN_NETWORK:-grficsv3_a-grfics-admin}

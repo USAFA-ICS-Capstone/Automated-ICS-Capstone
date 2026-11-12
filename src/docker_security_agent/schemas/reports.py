@@ -69,7 +69,10 @@ class ContainerSection(BaseModel):
     evidence_refs: list[str] = Field(
         description="References (E1, E2...) of the tool results this section is based on"
     )
-    notes: list[str] = Field(description="What you could not verify for this container; [] if none")
+    notes: list[str] = Field(
+        description="Only what you could not check for this container (a tool failed, or "
+        "the budget ran out); [] if none. CVEs you were told not to list are not a note"
+    )
 
 
 class AgentAssessment(BaseModel):

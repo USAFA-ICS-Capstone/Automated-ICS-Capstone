@@ -231,7 +231,9 @@ def build_harness_tools(
                 evidence copied from the tool results (same format as the final
                 assessment's findings).
             evidence_refs: References (E1, E2...) of the results you used.
-            notes: What you could not verify for this container; [] if none.
+            notes: Only what you could not check for this container (a tool failed,
+                or the budget ran out); [] if none. CVEs you were told not to list
+                are not a note.
         """
         key = resource_name.strip().lstrip("/").lower()
         problems, cleaned = check_section(store, resource_name, findings)

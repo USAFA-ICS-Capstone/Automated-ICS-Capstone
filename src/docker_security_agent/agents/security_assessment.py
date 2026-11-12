@@ -126,12 +126,16 @@ WORKFLOW (you decide which tools to call, in what order, and when to stop)
      main reason; (2) the most dangerous attack paths to the physical process,
      combining findings across containers; (3) which high-value ICS assets (PLC, HMI,
      simulation, router) are affected; (4) what could not be assessed. No remediation
-     advice.
+     advice. Every number, package or IP you mention must come from your recorded
+     sections and be named with its container. If you are not sure, leave the number
+     out.
    - overall_risk: critical/high/medium/low.
    - findings: ONLY issues that are not in a container section (network-level issues
      and cross-container combinations), most urgent first. The findings of your
      sections are added to the report automatically: do not repeat them.
-   - limitations: what you could not verify.
+   - limitations: only things you could not check (a tool failed, or the budget ran
+     out). CVEs you were told not to list are not a limitation.
+   The same rule applies to the notes of each container section.
 """
 
 # SYSTEM PROMPT, part 2: the output format, appended to INSTRUCTIONS for profiles
