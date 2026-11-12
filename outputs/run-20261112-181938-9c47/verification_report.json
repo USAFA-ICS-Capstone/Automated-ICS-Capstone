@@ -1,0 +1,311 @@
+{
+  "report_version": "1.0",
+  "phase": "network-verification",
+  "run_id": "run-20261112-181938-9c47",
+  "generated_at": "2026-11-12T19:19:04.232807Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "source_report": "/app/outputs/run-20261112-181938-9c47/agent_report.json",
+  "agent_status": "max_turns",
+  "executive_summary": "The verification agent produced no valid summary (status: max_turns).",
+  "verification": [
+    {
+      "claim": "kali -> plc:502 is reachable and Modbus device is present",
+      "source_finding_id": "",
+      "verified": "observed",
+      "assertion_type": "observed",
+      "evidence": "[E1] Port 502 is open with service 'mbap' detected. [E2] Modbus register read successful with value 0",
+      "tool_calls": [
+        {
+          "tool": "nmap.check_single_port",
+          "arguments": "{'target': 'plc', 'port': 502}",
+          "result": "[E1] Port 502 is open with service 'mbap' detected."
+        },
+        {
+          "tool": "modbus.read_register",
+          "arguments": "{'address': 0, 'slave_id': 1}",
+          "result": "[E2] Slave 1, Register 0 Value: 0"
+        }
+      ],
+      "notes": "Confirmed Modbus device at plc:502"
+    },
+    {
+      "claim": "Router container has excessive network capabilities (CAP_NET_ADMIN, CAP_NET_RAW)",
+      "source_finding_id": "F-AGENT-9933f0a24e",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify Docker container capabilities beyond metadata inspection",
+      "tool_calls": [],
+      "notes": "Docker container capabilities (CAP_NET_ADMIN, CAP_NET_RAW) cannot be verified with current tools; requires container runtime inspection"
+    },
+    {
+      "claim": "Unrestricted GRE port exposure on 'router' (port 51820/udp)",
+      "source_finding_id": "F-AGENT-7bdb4020e1",
+      "verified": "not_reproduced",
+      "assertion_type": "observed",
+      "evidence": "[E3] Port 51820/tcp is closed on 'router' (conn-refused)",
+      "tool_calls": [
+        {
+          "tool": "nmap.check_single_port",
+          "arguments": "{'target': 'router', 'port': 51820}",
+          "result": "[E3] Port 51820/tcp is closed on 'router' (conn-refused)"
+        }
+      ],
+      "notes": "Scan tested TCP instead of UDP (GRE protocol)"
+    },
+    {
+      "claim": "Exposed web interface on admin network on 'caldera'",
+      "source_finding_id": "F-AGENT-28afe762cc",
+      "verified": "observed",
+      "assertion_type": "observed",
+      "evidence": "[E4] Port 8888/tcp is open with service 'http' (aiohttp 3.10.11) on caldera (192.168.90.250)",
+      "tool_calls": [
+        {
+          "tool": "nmap.check_single_port",
+          "arguments": "{'target': 'caldera', 'port': 8888}",
+          "result": "[E4] Port 8888/tcp is open with service 'http' (aiohttp 3.10.11) on caldera (192.168.90.250)"
+        }
+      ],
+      "notes": "Web interface confirmed on admin network IP 192.168.90.250"
+    },
+    {
+      "claim": "Exposed web interface on 'plc' (port 8080/tcp)",
+      "source_finding_id": "F-AGENT-9afd91e075",
+      "verified": "observed",
+      "assertion_type": "observed",
+      "evidence": "[E5] Port 8080/tcp is open with service 'http-proxy' (Werkzeug/2.3.7 Python/3.9.2) on plc (192.168.95.2)",
+      "tool_calls": [
+        {
+          "tool": "nmap.check_single_port",
+          "arguments": "{'target': 'plc', 'port': 8080}",
+          "result": "[E5] Port 8080/tcp is open with service 'http-proxy' (Werkzeug/2.3.7 Python/3.9.2) on plc (192.168.95.2)"
+        }
+      ],
+      "notes": "Web interface confirmed on ICS network IP 192.168.95.2"
+    },
+    {
+      "claim": "Critical vulnerability in perl-base on 'router'",
+      "source_finding_id": "F-AGENT-f8dfee4c94",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify package versions or vulnerabilities in containers",
+      "tool_calls": [],
+      "notes": "Requires container package inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Critical vulnerability in zlib1g on 'router'",
+      "source_finding_id": "F-AGENT-240f18284c",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify package versions or vulnerabilities in containers",
+      "tool_calls": [],
+      "notes": "Requires container package inspection which is not supported by current tools"
+    },
+    {
+      "claim": "CAP_NET_ADMIN capability on 'EWS'",
+      "source_finding_id": "F-AGENT-099788426b",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify Docker container capabilities",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Default VNC password on 'EWS'",
+      "source_finding_id": "F-AGENT-7b2c19e20d",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify VNC password configuration",
+      "tool_calls": [],
+      "notes": "VNC password environment variables cannot be checked with current tools"
+    },
+    {
+      "claim": "Unpatched kernel vulnerabilities on 'EWS'",
+      "source_finding_id": "F-AGENT-aa2caf9e83",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify kernel versions or patch status in containers",
+      "tool_calls": [],
+      "notes": "Requires container package inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Critical Tomcat vulnerabilities on 'HMI'",
+      "source_finding_id": "F-AGENT-6791221300",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "[E6] Port 8080/tcp is open on HMI (192.168.90.107) but service version not detected in [E7]",
+      "tool_calls": [
+        {
+          "tool": "nmap.quick_scan",
+          "arguments": "{'target': 'hmi'}",
+          "result": "[E6] Port 8080/tcp is open on HMI (192.168.90.107) but service version not detected in [E7]"
+        },
+        {
+          "tool": "nmap.service_scan",
+          "arguments": "{'target': 'hmi'}",
+          "result": "[E7] Service scan failed to detect Tomcat version"
+        }
+      ],
+      "notes": "Service scan did not identify Tomcat version, cannot verify CVE status"
+    },
+    {
+      "claim": "Running as root user on 'caldera'",
+      "source_finding_id": "F-AGENT-e06fe71151",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container user configuration",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "No resource limits on 'router' container",
+      "source_finding_id": "F-AGENT-7a6aae4876",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container resource limits",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Running as root user on 'kali'",
+      "source_finding_id": "F-AGENT-a98e542694",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container user configuration",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "CAP_NET_ADMIN capability on 'kali'",
+      "source_finding_id": "F-AGENT-a510c23f5a",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify Docker container capabilities",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Default VNC credentials on 'kali'",
+      "source_finding_id": "F-AGENT-6ca972fc72",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify VNC password configuration",
+      "tool_calls": [],
+      "notes": "VNC password environment variables cannot be checked with current tools"
+    },
+    {
+      "claim": "Unrestricted GRE port exposure in router on 'router'",
+      "source_finding_id": "F-AGENT-c90d18598a",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify UDP port 51820 exposure",
+      "tool_calls": [],
+      "notes": "GRE protocol uses UDP, but current tools only support TCP port checks"
+    },
+    {
+      "claim": "CAP_NET_ADMIN capability on 'plc'",
+      "source_finding_id": "F-AGENT-0f36fb3a21",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify Docker container capabilities",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Critical Linux kernel issues on 'plc'",
+      "source_finding_id": "F-AGENT-7a6066bec7",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container kernel version or patch status",
+      "tool_calls": [],
+      "notes": "Requires container package inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Running as root user on 'simulation'",
+      "source_finding_id": "F-AGENT-2a478817f2",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container user configuration",
+      "tool_calls": [],
+      "notes": "Requires container runtime inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Docker socket mount on 'simulation'",
+      "source_finding_id": "F-AGENT-f2023d14ee",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container mount points",
+      "tool_calls": [],
+      "notes": "Requires container filesystem inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Router container bridges admin and ICS networks on 'router'",
+      "source_finding_id": "F-AGENT-fa400cf35a",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container network configurations",
+      "tool_calls": [],
+      "notes": "Requires Docker network inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Kali container on admin network on 'kali'",
+      "source_finding_id": "F-AGENT-c444c60f5e",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify container network memberships",
+      "tool_calls": [],
+      "notes": "Requires Docker network inspection which is not supported by current tools"
+    },
+    {
+      "claim": "Default VNC credentials in EWS container on 'EWS'",
+      "source_finding_id": "F-AGENT-2d136025bf",
+      "verified": "not_tested",
+      "assertion_type": "observed",
+      "evidence": "No tool available to verify VNC password configuration",
+      "tool_calls": [],
+      "notes": "VNC password environment variables cannot be checked with current tools"
+    }
+  ],
+  "limitations": [],
+  "errors": [
+    "agent: Agent exceeded max_turns=150: Max turns (150) exceeded"
+  ],
+  "metrics": {
+    "started_at": "2026-11-12T18:38:11.992471Z",
+    "finished_at": "2026-11-12T19:19:04.232583Z",
+    "duration_seconds": 2452.25,
+    "collection_seconds": 0.0,
+    "scan_seconds": 0.0,
+    "agent_seconds": 0.0,
+    "tool_calls_total": 150,
+    "tool_calls_agent": 150,
+    "tool_calls_blocked": 0,
+    "tool_calls_by_name": {
+      "nmap.check_single_port": 4,
+      "modbus.read_register": 1,
+      "harness.record_verification": 143,
+      "nmap.quick_scan": 1,
+      "nmap.service_scan": 1
+    },
+    "model_requests": 150,
+    "input_tokens": 7693488,
+    "output_tokens": 62851,
+    "total_tokens": 7756339
+  }
+}
