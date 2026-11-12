@@ -1,0 +1,77 @@
+{
+  "report_version": "1.0",
+  "phase": "network-verification",
+  "run_id": "run-20261110-203706-c395",
+  "generated_at": "2026-11-10T21:53:37.015033Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "source_report": "/app/outputs/run-20261110-203706-c395/agent_report.json",
+  "agent_status": "ok",
+  "executive_summary": "The primary claim (kali -> plc:502) was confirmed as open with Modbus protocol ([E1] port 502 open, [E2] register read successful). The HMI's Apache Tomcat 9.0.109 was observed ([E3] service scan detected http-proxy with version in raw output). All other claims (privileged capabilities, unpatched vulnerabilities, default credentials) could not be verified due to lack of tools for Docker metadata checks or specific service version validation.",
+  "verification": [
+    {
+      "claim": "kali -> plc:502 is reachable and responds with Modbus protocol",
+      "source_finding_id": "F-AGENT-59c0c601c7",
+      "verified": "observed",
+      "assertion_type": "observed",
+      "evidence": "[E1] Port 502 is open and running mbap (Modbus). [E2] Modbus register 0 returned value 0.",
+      "tool_calls": [
+        {
+          "tool": "check_single_port",
+          "arguments": "{'target': 'plc', 'port': 502}",
+          "result": "[E1] Port 502 is open and running mbap (Modbus)."
+        },
+        {
+          "tool": "read_register",
+          "arguments": "{'address': 0, 'slave_id': 1}",
+          "result": "[E2] Modbus register 0 returned value 0."
+        }
+      ],
+      "notes": "Modbus device confirmed via port scan and register read."
+    }
+  ],
+  "limitations": [
+    "Cannot verify Docker HostConfig.CapAdd or Config.User settings",
+    "No tools to test VNC password validity",
+    "No tool to detect gRPC, Perl, SQLite, or Go library versions",
+    "Cannot confirm network bridging between ICS/DMZ"
+  ],
+  "errors": [],
+  "metrics": {
+    "started_at": "2026-11-10T21:45:23.340731Z",
+    "finished_at": "2026-11-10T21:53:37.014942Z",
+    "duration_seconds": 493.65,
+    "collection_seconds": 0.0,
+    "scan_seconds": 0.0,
+    "agent_seconds": 0.0,
+    "tool_calls_total": 7,
+    "tool_calls_agent": 7,
+    "tool_calls_blocked": 0,
+    "tool_calls_by_name": {
+      "nmap.check_single_port": 3,
+      "modbus.read_register": 1,
+      "nmap.service_scan": 2,
+      "harness.record_verification": 1
+    },
+    "model_requests": 10,
+    "input_tokens": 130222,
+    "output_tokens": 9761,
+    "total_tokens": 139983
+  }
+}

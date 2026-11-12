@@ -1,0 +1,1106 @@
+{
+  "report_version": "2.0",
+  "run_id": "run-20261110-203706-c395",
+  "generated_at": "2026-11-10T20:57:00.519672Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "prompt_version": "v12",
+  "agent_status": "ok",
+  "snapshot_id": "snap-0e6ba01a499dc4e1",
+  "executive_summary": "The Docker environment hosting the ICS lab presents critical security risks due to multiple containers running as root with elevated capabilities, exposed ports serving ICS components, and images with unpatched critical vulnerabilities. The most dangerous attack paths involve exploiting the simulation container's Docker socket mount (allowing arbitrary container creation) and the router's CAP_NET_ADMIN/CAP_NET_RAW capabilities (enabling network manipulation). High-value assets like the PLC (plc) and HMI (HMI) are directly exposed through published ports (8080, 6081) and run on images with unpatched critical vulnerabilities in core libraries (perl, OpenSSL). Network segmentation between admin/ICS/DMZ networks is unverified, and several containers (EWS, kali, simulation) have default credentials or unsecured mounts. The assessment was limited by the inability to verify network policies and the actual usage of certain capabilities.",
+  "overall_risk": "critical",
+  "findings": [
+    {
+      "id": "F-AGENT-59a609b9a4",
+      "rule_id": "AGENT",
+      "title": "Privileged Network Capabilities",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN allows full network configuration changes. In an ICS context, this could enable an attacker to modify routing tables or disable firewalls, directly impacting process availability and integrity.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4408018a81",
+      "rule_id": "AGENT",
+      "title": "Host Volume Mount",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "Mounts.Source",
+          "value": "/var/lib/docker/volumes/plc_volume/_data",
+          "note": ""
+        }
+      ],
+      "explanation": "Mounting /var/lib/docker/volumes grants access to Docker's internal storage. If compromised, this could allow data exfiltration of ICS configurations or persistence across container restarts.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-d6a848c611",
+      "rule_id": "AGENT",
+      "title": "Critical Vulnerability in Perl",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "plc",
+          "path": "CVE-2026-13221",
+          "value": "perl 5.32.1-4+deb11u3",
+          "note": ""
+        }
+      ],
+      "explanation": "Perl is used in many ICS scripts. This vulnerability allows remote code execution through crafted input, potentially enabling full container escape to the host.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-13221"
+      ]
+    },
+    {
+      "id": "F-AGENT-fa6156bb9d",
+      "rule_id": "AGENT",
+      "title": "Critical Vulnerability in Glib",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "plc",
+          "path": "CVE-2025-14087",
+          "value": "libglib2.0-0 2.66.8-1+deb11u4",
+          "note": ""
+        }
+      ],
+      "explanation": "Glib is a core library for many ICS applications. This vulnerability could allow privilege escalation within the container, leading to process manipulation.",
+      "remediation": "",
+      "references": [
+        "CVE-2025-14087"
+      ]
+    },
+    {
+      "id": "F-AGENT-8eea362b69",
+      "rule_id": "AGENT",
+      "title": "Unpatched Curl Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "plc",
+          "path": "CVE-2023-23914",
+          "value": "curl 7.74.0-1.3+deb11u13",
+          "note": ""
+        }
+      ],
+      "explanation": "Curl is used for network communication. This vulnerability could allow command injection through crafted URLs, potentially disrupting ICS network operations.",
+      "remediation": "",
+      "references": [
+        "CVE-2023-23914"
+      ]
+    },
+    {
+      "id": "F-AGENT-6e883e50ad",
+      "rule_id": "AGENT",
+      "title": "Root User Privileges",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root allows full host access if container is compromised. In ICS, this could enable direct manipulation of process control systems.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-8485299423",
+      "rule_id": "AGENT",
+      "title": "Privileged Network Capabilities",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN allows network configuration changes. In ICS context, this could be exploited to manipulate routing tables or disable firewalls.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-637996394a",
+      "rule_id": "AGENT",
+      "title": "Default VNC Password",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default credentials are a common attack vector. This would allow easy access to the VNC interface for process monitoring/attack.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-2879a64b88",
+      "rule_id": "AGENT",
+      "title": "Critical Go Standard Library Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "EWS",
+          "path": "CVE-2024-24790",
+          "value": "stdlib v1.21.6",
+          "note": ""
+        }
+      ],
+      "explanation": "Exploitable via arduino-cli binaries. Could allow arbitrary code execution with no available fix in current image.",
+      "remediation": "",
+      "references": [
+        "CVE-2024-24790"
+      ]
+    },
+    {
+      "id": "F-AGENT-6fe02dadd0",
+      "rule_id": "AGENT",
+      "title": "Critical gRPC Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "EWS",
+          "path": "CVE-2026-33186",
+          "value": "google.golang.org/grpc v1.65.0",
+          "note": ""
+        }
+      ],
+      "explanation": "Affects multiple arduino-cli binaries. Remote code execution possible through network services exposed on port 6080.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-33186"
+      ]
+    },
+    {
+      "id": "F-AGENT-13f1371eca",
+      "rule_id": "AGENT",
+      "title": "Root User Privileges",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root allows full host access if container is compromised. HMI is a high-value ICS asset for process monitoring and control.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b8b6fb5c38",
+      "rule_id": "AGENT",
+      "title": "Privileged Network Capabilities",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN enables network configuration changes. In ICS, this could be used to manipulate routing tables or disable firewalls, directly impacting process integrity.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-19a344f8fc",
+      "rule_id": "AGENT",
+      "title": "Default Passwords in Environment",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.Env",
+          "value": "MYSQL_ROOT_PASSWORD=root",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.Env",
+          "value": "TOMCAT_PASSWORD=tcuser",
+          "note": ""
+        }
+      ],
+      "explanation": "Default credentials (root/root, tcuser/tcuser) are a common attack vector. HMI access would allow direct manipulation of process monitoring systems.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-159bbea3d1",
+      "rule_id": "AGENT",
+      "title": "Critical Tomcat Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "HMI",
+          "path": "CVE-2026-43512",
+          "value": "org.apache.tomcat:tomcat-catalina 9.0.109",
+          "note": ""
+        }
+      ],
+      "explanation": "Remote code execution vulnerability in Tomcat web server. HMI's web interface on port 8080 makes this directly exploitable.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-43512"
+      ]
+    },
+    {
+      "id": "F-AGENT-82bf72935f",
+      "rule_id": "AGENT",
+      "title": "Critical Spring Security Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "HMI",
+          "path": "CVE-2022-22978",
+          "value": "org.springframework.security:spring-security-web 4.2.5.RELEASE",
+          "note": ""
+        }
+      ],
+      "explanation": "Authentication bypass vulnerability in Spring Security. HMI's web services could be exploited to gain unauthorized access.",
+      "remediation": "",
+      "references": [
+        "CVE-2022-22978"
+      ]
+    },
+    {
+      "id": "F-AGENT-4020608cea",
+      "rule_id": "AGENT",
+      "title": "Root User Privileges",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root allows full host access if container is compromised. Caldera is an attacker tool container with direct access to ICS networks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-7e4aba7bb7",
+      "rule_id": "AGENT",
+      "title": "Privileged Network Capabilities",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN enables network configuration changes. In ICS context, this could be used to manipulate routing tables or disable firewalls, directly impacting process integrity.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-f322929e09",
+      "rule_id": "AGENT",
+      "title": "Critical Go Standard Library Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "caldera",
+          "path": "CVE-2025-68121",
+          "value": "stdlib v1.22.5 (gobinary, gems-client)",
+          "note": ""
+        }
+      ],
+      "explanation": "Remote code execution vulnerability in multiple Go binaries. Caldera's network exposure on port 8888 makes this directly exploitable for ICS network control.",
+      "remediation": "",
+      "references": [
+        "CVE-2025-68121"
+      ]
+    },
+    {
+      "id": "F-AGENT-011e9d8872",
+      "rule_id": "AGENT",
+      "title": "Critical SQLite Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "caldera",
+          "path": "CVE-2025-7458",
+          "value": "libsqlite3-0 3.40.1-2+deb12u2",
+          "note": ""
+        }
+      ],
+      "explanation": "SQL injection vulnerability in SQLite library. Caldera's role as an attacker container could leverage this to manipulate ICS database operations.",
+      "remediation": "",
+      "references": [
+        "CVE-2025-7458"
+      ]
+    },
+    {
+      "id": "F-AGENT-9152626442",
+      "rule_id": "AGENT",
+      "title": "Critical zlib Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "caldera",
+          "path": "CVE-2023-45853",
+          "value": "zlib1g 1:1.2.13.dfsg-1",
+          "note": ""
+        }
+      ],
+      "explanation": "Buffer overflow in zlib could be exploited through compressed data. Caldera's network capabilities make this a potential vector for data manipulation attacks.",
+      "remediation": "",
+      "references": [
+        "CVE-2023-45853"
+      ]
+    },
+    {
+      "id": "F-AGENT-16a132bb75",
+      "rule_id": "AGENT",
+      "title": "Root User Privileges",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root allows full host access if container is compromised. Kali is a penetration testing container with direct access to ICS networks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-400259b302",
+      "rule_id": "AGENT",
+      "title": "Privileged Network Capabilities",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN enables network configuration changes. In ICS, this could be used to manipulate routing tables or disable firewalls, directly impacting process integrity.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-48af1967fd",
+      "rule_id": "AGENT",
+      "title": "Default VNC Password",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default credentials are a common attack vector. This would allow easy access to the VNC interface for process monitoring/attack.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-8d6dc76834",
+      "rule_id": "AGENT",
+      "title": "Exposed Penetration Testing Tools",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.ExposedPorts",
+          "value": "5900/tcp, 6080/tcp",
+          "note": ""
+        }
+      ],
+      "explanation": "Exposing penetration testing tools on ports 5900 and 6080 creates direct attack surfaces for ICS network exploitation.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-ad3ad8ba89",
+      "rule_id": "AGENT",
+      "title": "Unverified Image Vulnerabilities",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:scan_image",
+          "resource": "kali",
+          "path": "counts_by_severity",
+          "value": "none",
+          "note": ""
+        }
+      ],
+      "explanation": "No critical vulnerabilities found in image scan, but Kali's toolset nature inherently carries high-risk capabilities.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-36a1494438",
+      "rule_id": "AGENT",
+      "title": "Root User Privileges",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root allows full host access if container is compromised. Router is a critical ICS network segmentation component.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-dbe2928018",
+      "rule_id": "AGENT",
+      "title": "Privileged Network Capabilities",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN, CAP_NET_RAW]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN and CAP_NET_RAW enable full network control. In ICS, this could be used to manipulate routing tables or perform network attacks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4c18004d01",
+      "rule_id": "AGENT",
+      "title": "Critical Perl Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "router",
+          "path": "CVE-2026-13221",
+          "value": "perl-base 5.36.0-7+deb12u3",
+          "note": ""
+        }
+      ],
+      "explanation": "Perl is used in many ICS scripts. This vulnerability allows remote code execution through crafted input, potentially enabling network manipulation.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-13221"
+      ]
+    },
+    {
+      "id": "F-AGENT-d7fbdc9630",
+      "rule_id": "AGENT",
+      "title": "Critical SQLite Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "router",
+          "path": "CVE-2025-7458",
+          "value": "libsqlite3-0 3.40.1-2+deb12u2",
+          "note": ""
+        }
+      ],
+      "explanation": "SQL injection vulnerability in SQLite library. Router's network management functions could be exploited to manipulate routing data.",
+      "remediation": "",
+      "references": [
+        "CVE-2025-7458"
+      ]
+    },
+    {
+      "id": "F-AGENT-5be0582ce9",
+      "rule_id": "AGENT",
+      "title": "Critical zlib Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "router",
+          "path": "CVE-2023-45853",
+          "value": "zlib1g 1:1.2.13.dfsg-1",
+          "note": ""
+        }
+      ],
+      "explanation": "Buffer overflow in zlib could be exploited through compressed data. Router's network processing makes this a potential vector for data manipulation attacks.",
+      "remediation": "",
+      "references": [
+        "CVE-2023-45853"
+      ]
+    },
+    {
+      "id": "F-AGENT-5ed435bd91",
+      "rule_id": "AGENT",
+      "title": "Root User Privileges",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root allows full host access if container is compromised. Simulation is a core ICS process component with Docker socket access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-64c9b49ecd",
+      "rule_id": "AGENT",
+      "title": "Docker Socket Mount",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Mounts.Source",
+          "value": "/var/run/docker.sock",
+          "note": ""
+        }
+      ],
+      "explanation": "Mounting /var/run/docker.sock grants container full Docker API access. This would allow container escape and arbitrary container creation/deletion.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b3e34016bb",
+      "rule_id": "AGENT",
+      "title": "Critical GnuTLS Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "simulation",
+          "path": "CVE-2026-33845",
+          "value": "libgnutls30 3.7.9-2+deb12u4",
+          "note": ""
+        }
+      ],
+      "explanation": "TLS/SSL library vulnerability allows man-in-the-middle attacks. Simulation's network access makes this a vector for ICS communication interception.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-33845"
+      ]
+    },
+    {
+      "id": "F-AGENT-be16c2295d",
+      "rule_id": "AGENT",
+      "title": "Critical SQLite Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "simulation",
+          "path": "CVE-2025-7458",
+          "value": "libsqlite3-0 3.40.1-2+deb12u1",
+          "note": ""
+        }
+      ],
+      "explanation": "SQL injection vulnerability in SQLite library. Simulation's database operations could be exploited to manipulate process data.",
+      "remediation": "",
+      "references": [
+        "CVE-2025-7458"
+      ]
+    },
+    {
+      "id": "F-AGENT-9f82940a9b",
+      "rule_id": "AGENT",
+      "title": "Critical OpenSSL Vulnerability",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "simulation",
+          "path": "CVE-2026-31789",
+          "value": "libssl3 3.0.16-1~deb12u1",
+          "note": ""
+        }
+      ],
+      "explanation": "OpenSSL vulnerability allows remote code execution. Simulation's network exposure on port 80 makes this directly exploitable.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-31789"
+      ]
+    },
+    {
+      "id": "F-AGENT-75077a82f2",
+      "rule_id": "AGENT",
+      "title": "Unsecured Docker Socket Access",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Mounts.Source",
+          "value": "/var/run/docker.sock",
+          "note": ""
+        }
+      ],
+      "explanation": "Mounting the Docker socket allows full container management capabilities. If simulation is compromised, attackers could create/destroy other containers including critical PLC/HMI components.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-42737210b2",
+      "rule_id": "AGENT",
+      "title": "Network Bridging Between ICS and DMZ",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:network_inspect",
+          "resource": "router",
+          "path": "Containers",
+          "value": "Connected to both grficsv3_b-ics-net and grficsv3_c-dmz-net",
+          "note": ""
+        }
+      ],
+      "explanation": "Router container bridges ICS and DMZ networks without visible segmentation. This creates a direct attack path from DMZ attacker tools (caldera, kali) to ICS process networks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-150402a0d3",
+      "rule_id": "AGENT",
+      "title": "Multiple Root-Privileged Containers",
+      "resource_type": "unknown",
+      "resource_name": "plc, EWS, router, simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc, EWS, router, simulation",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Root privileges in ICS containers increase risk of privilege escalation attacks. All four containers are critical to process control and monitoring.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-59c0c601c7",
+      "rule_id": "AGENT",
+      "title": "Default Credentials in ICS Components",
+      "resource_type": "unknown",
+      "resource_name": "EWS, kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS, kali",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default VNC passwords in engineering workstations and attacker containers provide easy access vectors for ICS network infiltration.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-e2d88ff6a9",
+      "rule_id": "AGENT",
+      "title": "Unpatched Critical Vulnerabilities in Network Libraries",
+      "resource_type": "unknown",
+      "resource_name": "router, simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:findings_list",
+          "resource": "router, simulation",
+          "path": "CVE-2026-31789",
+          "value": "openssl 3.0.16-1~deb12u1",
+          "note": ""
+        }
+      ],
+      "explanation": "Critical OpenSSL vulnerabilities in network-connected containers could enable man-in-the-middle attacks against ICS communications.",
+      "remediation": "",
+      "references": [
+        "CVE-2026-31789"
+      ]
+    }
+  ],
+  "limitations": [
+    "Unable to verify network segmentation policies between ICS/DMZ networks",
+    "Could not assess actual usage of CAP_NET_ADMIN capabilities in production scenarios",
+    "Some containers (plc, HMI) had 55+ critical vulnerabilities but only top 5 were recorded due to tool output size constraints"
+  ],
+  "errors": [],
+  "metrics": {
+    "started_at": "2026-11-10T20:37:06.369029Z",
+    "finished_at": "2026-11-10T20:57:00.509118Z",
+    "duration_seconds": 1194.15,
+    "collection_seconds": 0.28,
+    "scan_seconds": 22.53,
+    "agent_seconds": 1169.92,
+    "tool_calls_total": 501,
+    "tool_calls_agent": 39,
+    "tool_calls_blocked": 0,
+    "tool_calls_by_name": {
+      "docker.system_version": 1,
+      "docker.container_list": 2,
+      "docker.image_list": 1,
+      "docker.network_list": 2,
+      "docker.volume_list": 1,
+      "trivy.trivy_version": 1,
+      "trivy.scan_image": 15,
+      "trivy.findings_list": 455,
+      "docker.container_inspect": 7,
+      "docker.image_inspect": 7,
+      "harness.record_container_section": 7,
+      "docker.network_inspect": 2
+    },
+    "model_requests": 40,
+    "input_tokens": 1374361,
+    "output_tokens": 27903,
+    "total_tokens": 1402264
+  }
+}
