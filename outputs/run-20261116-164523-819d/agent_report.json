@@ -1,0 +1,737 @@
+{
+  "report_version": "2.0",
+  "run_id": "run-20261116-164523-819d",
+  "generated_at": "2026-11-16T16:51:35.157913Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "prompt_version": "v14",
+  "agent_status": "ok",
+  "snapshot_id": "snap-eff569f4a9925021",
+  "executive_summary": "The Docker environment hosting the ICS lab presents critical risks through container escape and network bridging. The simulation container's Docker socket mount (E8) allows unrestricted control over the Docker host, enabling attackers to manipulate any container on the ICS network (192.168.95.45). The router container (E7) operates with CAP_NET_ADMIN and CAP_NET_RAW on both DMZ and ICS networks, creating a direct attack path from external networks to the process network. The PLC container (E2) and EWS workstation (E3) both have CAP_NET_ADMIN on the ICS network, widening the attack surface. These issues combine to create multiple vectors for disrupting physical process integrity and availability. The most dangerous path involves exploiting the simulation container's Docker socket access to reconfigure the router's network rules, then pivoting to the PLC. All ICS assets (PLC, simulation, and engineering workstation) are affected. No containers were skipped due to budget constraints.",
+  "overall_risk": "critical",
+  "findings": [
+    {
+      "id": "F-AGENT-73459c018e",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability granted",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes that could disrupt PLC communication with physical process devices.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4a5bfa7da5",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially affecting process control integrity.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-9a945aa20f",
+      "rule_id": "AGENT",
+      "title": "Writable persistent volume mount",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "Mounts[0].Mode",
+          "value": "rw",
+          "note": ""
+        }
+      ],
+      "explanation": "Writable /docker_persistent volume could allow persistence of malicious modifications to PLC configuration files.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b9ae22d9f2",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root provides full access to container resources, enabling lateral movement to the process network where it resides.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-2079ad5927",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability granted",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes on the process network (192.168.95.5), potentially disrupting PLC communications.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4f9852a08f",
+      "rule_id": "AGENT",
+      "title": "Weak VNC password in environment",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default password for VNC service creates a low-effort entry point to the process network if exposed.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4ba659fa47",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root provides full container access, enabling lateral movement to the admin network which connects to the ICS network.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-be7738c520",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability granted",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes on the DMZ network (192.168.90.107), potentially enabling traffic interception to the ICS network.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-a5d5a52ba6",
+      "rule_id": "AGENT",
+      "title": "Weak database credentials in environment",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.Env",
+          "value": "MYSQL_ROOT_PASSWORD=root",
+          "note": ""
+        }
+      ],
+      "explanation": "Default MySQL credentials increase risk of database compromise, which could disrupt HMI-PLC communication patterns.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-0cf6fdb99a",
+      "rule_id": "AGENT",
+      "title": "External port exposure on DMZ",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "NetworkSettings.Ports.8080/tcp[0].HostPort",
+          "value": "\"6081\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Published port 6081/tcp on DMZ network creates an entry point for network-based attacks targeting the HMI interface.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-66fc18c8f7",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if Caldera's exposed port 8888/tcp is compromised via the DMZ network.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4268a920ba",
+      "rule_id": "AGENT",
+      "title": "External port exposure on DMZ",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "NetworkSettings.Ports.8888/tcp[0].HostPort",
+          "value": "\"8888\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Published port 8888/tcp on DMZ network (192.168.90.250) creates an entry point for network-based attacks targeting Caldera's attack simulation capabilities.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-416bc7657a",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.User",
+          "value": "root",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root provides full container access, enabling lateral movement to the admin network which connects to the ICS network.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-eba7b9f5c7",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability granted",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes on the DMZ network (192.168.90.6), potentially enabling traffic interception to the ICS network.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-d1f3968c4b",
+      "rule_id": "AGENT",
+      "title": "Weak VNC password in environment",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default password for VNC service creates a low-effort entry point to the DMZ network if exposed.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-04dbf8050d",
+      "rule_id": "AGENT",
+      "title": "External port exposure on DMZ",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "NetworkSettings.Ports.6080/tcp[0].HostPort",
+          "value": "\"6088\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Published port 6088/tcp on DMZ network (192.168.90.6) creates an entry point for network-based attacks targeting Kali's attack simulation capabilities.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-28cbf5665f",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root provides full access to container resources, enabling network rule manipulation between DMZ (192.168.90.200) and ICS (192.168.95.200) networks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-1e7ce52d35",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN and CAP_NET_RAW capabilities granted",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN, CAP_NET_RAW]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows full network control on the ICS network (192.168.95.200) and raw packet manipulation, directly enabling traffic interception or disruption of PLC communications.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-1a7c64f5d7",
+      "rule_id": "AGENT",
+      "title": "Writable network configuration volume",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "Mounts[0].Mode",
+          "value": "rw",
+          "note": ""
+        }
+      ],
+      "explanation": "Writable /etc/firewall volume could allow persistence of malicious network rule changes affecting ICS-DMZ traffic routing.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-f65d1c6949",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root provides full container access, enabling lateral movement to the process network (192.168.95.45) where it resides.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-8e57f5a67f",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability granted",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes on the ICS network (192.168.95.45), potentially disrupting simulation-PLC communication patterns.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-01db367624",
+      "rule_id": "AGENT",
+      "title": "Docker socket bind mount",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Mounts[0].Source",
+          "value": "/var/run/docker.sock",
+          "note": ""
+        }
+      ],
+      "explanation": "Mounting the Docker socket (/var/run/docker.sock) grants container escape capabilities to manipulate other containers on the ICS network (192.168.95.45).",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-42142e2d42",
+      "rule_id": "AGENT",
+      "title": "External port exposure on admin network",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "NetworkSettings.Ports.80/tcp[0].HostPort",
+          "value": "\"80\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Published port 80/tcp on admin network (172.18.0.7) creates an entry point for network-based attacks targeting the simulation environment.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-915af0a32c",
+      "rule_id": "AGENT",
+      "title": "Docker socket exposure on process network",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Mounts[0].Source",
+          "value": "/var/run/docker.sock",
+          "note": ""
+        }
+      ],
+      "explanation": "Mounting the Docker socket in a container on the ICS network (192.168.95.45) allows full control over the Docker host, enabling arbitrary container creation/execution on the process network.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-0ac381d160",
+      "rule_id": "AGENT",
+      "title": "ICS network bridging with elevated privileges",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN, CAP_NET_RAW]",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "NetworkSettings.Networks.grficsv3_c-dmz-net.IPAddress",
+          "value": "192.168.90.200",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "NetworkSettings.Networks.grficsv3_b-ics-net.IPAddress",
+          "value": "192.168.95.200",
+          "note": ""
+        }
+      ],
+      "explanation": "The router container's position on both DMZ and ICS networks combined with full network manipulation capabilities creates a direct bridge for external attackers to reconfigure process network access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-233d860cea",
+      "rule_id": "AGENT",
+      "title": "Multiple ICS network containers with network capabilities",
+      "resource_type": "unknown",
+      "resource_name": "ics_network",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "ics_network",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "ics_network",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "ics_network",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Three containers on the ICS network (plc, EWS, simulation) all have CAP_NET_ADMIN, creating redundant attack paths for network manipulation and lateral movement.",
+      "remediation": "",
+      "references": []
+    }
+  ],
+  "limitations": [],
+  "errors": [],
+  "metrics": {
+    "started_at": "2026-11-16T16:45:23.605378Z",
+    "finished_at": "2026-11-16T16:51:35.144105Z",
+    "duration_seconds": 371.51,
+    "collection_seconds": 0.29,
+    "scan_seconds": 20.68,
+    "agent_seconds": 349.52,
+    "tool_calls_total": 480,
+    "tool_calls_agent": 15,
+    "tool_calls_blocked": 0,
+    "tool_calls_by_name": {
+      "docker.system_version": 1,
+      "docker.container_list": 2,
+      "docker.image_list": 1,
+      "docker.network_list": 1,
+      "docker.volume_list": 1,
+      "trivy.trivy_version": 1,
+      "trivy.scan_image": 8,
+      "trivy.findings_list": 451,
+      "docker.container_inspect": 7,
+      "harness.record_container_section": 7
+    },
+    "model_requests": 16,
+    "input_tokens": 388485,
+    "output_tokens": 10291,
+    "total_tokens": 398776
+  }
+}

@@ -1,0 +1,1043 @@
+{
+  "report_version": "2.0",
+  "run_id": "run-20261116-152200-9f39",
+  "generated_at": "2026-11-16T15:28:48.617244Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "prompt_version": "v14",
+  "agent_status": "ok",
+  "snapshot_id": "snap-af65f58660943b35",
+  "executive_summary": "The Docker environment hosting the ICS lab presents multiple high-risk attack paths to the physical process. The most critical vulnerabilities are the simulation container's unrestricted Docker socket access (E8) and the router container's multi-network bridging with elevated capabilities (E7). These create direct pathways for container escape and network manipulation. The PLC and EWS containers (E2, E3) have CAP_NET_ADMIN and root execution, which could allow protocol-level attacks if compromised. The HMI and kali containers (E4, E6) also have network capabilities that could be exploited via the DMZ network. All containers on the ICS network (plc, EWS, simulation) have no resource limits or hardened security profiles, weakening isolation. The audit agent container (E1) has no direct process network access but could be used for lateral movement if other vectors are exploited.",
+  "overall_risk": "critical",
+  "findings": [
+    {
+      "id": "F-AGENT-3ee7b3f1f9",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability added",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes that could be exploited to manipulate ICS network traffic or bypass segmentation.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4a5bfa7da5",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-327973f105",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the PLC or process network if container is compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-68b8ed9dde",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-27dff1d59f",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability added",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes that could be exploited to manipulate ICS network traffic or bypass segmentation.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b9ae22d9f2",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "Config.User",
+          "value": "\"root\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-222b782ba6",
+      "rule_id": "AGENT",
+      "title": "Weak default VNC password",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default credentials increase risk of brute-force attacks against the engineering workstation's VNC interface.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4b79045bca",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the EWS or process network if container is compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-102095922f",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "EWS",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "EWS",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-1545824c3d",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability added",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes that could be exploited to manipulate DMZ/ICS network traffic or bypass segmentation.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-4ba659fa47",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-904ebf7a85",
+      "rule_id": "AGENT",
+      "title": "Default credentials in environment variables",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "Config.Env",
+          "value": "MYSQL_ROOT_PASSWORD=root",
+          "note": ""
+        }
+      ],
+      "explanation": "Default credentials increase risk of brute-force attacks against the HMI's database and web interface.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-3ac0ca075c",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the HMI or process network if container is compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-e67a0c2ec2",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "HMI",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "HMI",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-66fc18c8f7",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-91de073e20",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the Caldera framework or process network if container is compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-8468a4092e",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "caldera",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "caldera",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-a6ecff23a3",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability added",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes that could be exploited to manipulate DMZ/ICS network traffic or bypass segmentation.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-416bc7657a",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.User",
+          "value": "\"root\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-a6a13994ff",
+      "rule_id": "AGENT",
+      "title": "Weak default VNC password",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "Config.Env",
+          "value": "VNC_PASSWORD=changeme",
+          "note": ""
+        }
+      ],
+      "explanation": "Default credentials increase risk of brute-force attacks against the Kali container's VNC interface.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-8d6a960c67",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the Kali container or process network if compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b16b7ac2ae",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "kali",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "kali",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-6e48de016e",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN and CAP_NET_RAW capabilities added",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN, CAP_NET_RAW]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows full network configuration and raw socket access, creating a direct attack vector between admin, DMZ, and ICS networks.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-28cbf5665f",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-5b3698fb66",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the network gateway or process network if container is compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-e25dab8638",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-a21d73b782",
+      "rule_id": "AGENT",
+      "title": "CAP_NET_ADMIN capability added",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows network configuration changes that could be exploited to manipulate ICS network traffic or bypass segmentation.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-f65d1c6949",
+      "rule_id": "AGENT",
+      "title": "Root user execution",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Config.User",
+          "value": "\"\"",
+          "note": ""
+        }
+      ],
+      "explanation": "Running as root increases risk of privilege escalation if container is compromised, potentially allowing access to process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-e5f56d678c",
+      "rule_id": "AGENT",
+      "title": "Docker socket mounted with read-write access",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Mounts[0].Mode",
+          "value": "rw",
+          "note": ""
+        }
+      ],
+      "explanation": "Provides full control over the Docker host, enabling container escape and arbitrary container creation/deletion.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-52bc362d42",
+      "rule_id": "AGENT",
+      "title": "No resource limits configured",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access could allow denial-of-service attacks against the simulation or process network if container is compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-c5f44ff0c4",
+      "rule_id": "AGENT",
+      "title": "No seccomp/AppArmor profile applied",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "HostConfig.AppArmorProfile",
+          "value": "\"\"",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "HostConfig.SecurityOpt",
+          "value": "null",
+          "note": ""
+        }
+      ],
+      "explanation": "Default security profiles may not restrict ICS-specific attack vectors like protocol manipulation or hardware access.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-63ad804e59",
+      "rule_id": "AGENT",
+      "title": "Simulation container provides Docker host control via socket mount",
+      "resource_type": "unknown",
+      "resource_name": "simulation",
+      "resource_id": "",
+      "category": "other",
+      "severity": "critical",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "simulation",
+          "path": "Mounts[0].Mode",
+          "value": "rw",
+          "note": ""
+        }
+      ],
+      "explanation": "A compromised simulation container could execute arbitrary Docker commands, bypassing all container isolation and directly accessing the PLC and other process network assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-45b6a3dd59",
+      "rule_id": "AGENT",
+      "title": "Router container bridges admin, DMZ, and ICS networks with elevated privileges",
+      "resource_type": "unknown",
+      "resource_name": "router",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "router",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN, CAP_NET_RAW]",
+          "note": ""
+        }
+      ],
+      "explanation": "CAP_NET_ADMIN and CAP_NET_RAW capabilities on a container connected to all three networks create a direct attack vector between security zones.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-9ba584c723",
+      "rule_id": "AGENT",
+      "title": "PLC container has network administration capabilities on process network",
+      "resource_type": "unknown",
+      "resource_name": "plc",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "plc",
+          "path": "HostConfig.CapAdd",
+          "value": "[CAP_NET_ADMIN]",
+          "note": ""
+        }
+      ],
+      "explanation": "Allows potential manipulation of ICS network traffic directly from the PLC container if compromised.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-306efcf269",
+      "rule_id": "AGENT",
+      "title": "Multiple containers on process network lack resource limits",
+      "resource_type": "unknown",
+      "resource_name": "grficsv3_b-ics-net",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:container_inspect",
+          "resource": "grficsv3_b-ics-net",
+          "path": "HostConfig.CpuShares",
+          "value": "0",
+          "note": ""
+        },
+        {
+          "source": "agent:container_inspect",
+          "resource": "grficsv3_b-ics-net",
+          "path": "HostConfig.Memory",
+          "value": "0",
+          "note": ""
+        }
+      ],
+      "explanation": "Unbounded resource access on the process network could allow denial-of-service attacks against critical ICS assets.",
+      "remediation": "",
+      "references": []
+    }
+  ],
+  "limitations": [
+    "No image vulnerability scanning tools were used in this assessment",
+    "Stopped containers were not inspected",
+    "No network traffic analysis tools were used to confirm protocol exposure"
+  ],
+  "errors": [],
+  "metrics": {
+    "started_at": "2026-11-16T15:22:00.899252Z",
+    "finished_at": "2026-11-16T15:28:48.601314Z",
+    "duration_seconds": 407.69,
+    "collection_seconds": 0.36,
+    "scan_seconds": 29.21,
+    "agent_seconds": 375.98,
+    "tool_calls_total": 480,
+    "tool_calls_agent": 15,
+    "tool_calls_blocked": 0,
+    "tool_calls_by_name": {
+      "docker.system_version": 1,
+      "docker.container_list": 2,
+      "docker.image_list": 1,
+      "docker.network_list": 1,
+      "docker.volume_list": 1,
+      "trivy.trivy_version": 1,
+      "trivy.scan_image": 8,
+      "trivy.findings_list": 451,
+      "docker.container_inspect": 7,
+      "harness.record_container_section": 7
+    },
+    "model_requests": 16,
+    "input_tokens": 397929,
+    "output_tokens": 11055,
+    "total_tokens": 408984
+  }
+}
