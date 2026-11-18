@@ -61,7 +61,11 @@ __version__ = "0.1.0"
 #         recorded sections, named with its container (or be left out); limitations
 #         and section notes hold only what could not be checked, not the CVEs the
 #         agent was told not to list (it mixed numbers between containers there)
-PROMPT_VERSION = "v13"
+#   v14 - configuration/isolation only: the agent is given NO image scanner
+#         (Trivy) and the prompt never mentions it; every finding is a
+#         config/network finding with vulnerability_ids [] (assess the agent
+#         without vulnerability scanning)
+PROMPT_VERSION = "v14"
 
 # Bumped whenever the harness around the agent changes what the model sees or
 # can do, independently of the prompt text. Recorded in every run manifest.

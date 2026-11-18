@@ -584,12 +584,16 @@ async def _agent_phase(
     # produced; the agent can fetch results back and records one section per
     # container; older results become reference stubs before each model call.
     store = EvidenceStore(run_id, settings.assessment_db_path)
-    for server in mcp_servers:
+    # v14: the agent assesses configuration/isolation only. Withhold the image
+    # scanner (Trivy) so the model never sees or calls scan_image/findings_list;
+    # it gets Docker inspection tools + the harness tools only.
+    agent_servers = [s for s in mcp_servers if s.config.role != "image_scanner"]
+    for server in agent_servers:
         server.evidence = store
     try:
         agent = build_agent(
             bundle,
-            mcp_servers=mcp_servers,
+            mcp_servers=agent_servers,
             tools=build_harness_tools(
                 store,
                 recorder,
@@ -611,7 +615,7 @@ async def _agent_phase(
         )
         outcome = await run_agent(
             agent,
-            build_input(objective),
+            build_input(objective, limits.max_tool_calls, limits.max_turns),
             max_turns=limits.max_turns,
             timeout_seconds=limits.max_duration_seconds,
             session=open_session(session_id, settings.session_db_path),

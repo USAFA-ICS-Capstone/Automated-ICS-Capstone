@@ -373,38 +373,52 @@ wrong image would appear as a finding. Runs before 2026-11-09 also have a
 `comparison.md` (scores against the deterministic findings) and a "Rejected findings"
 section (claims that failed validation); both have since been removed.
 
-### 10b. Phase 2 — verify the network claims (optional)
+### 10b. Phase 2 — live network exposure assessment (optional)
 
-Phase 1 (`assess`) reads Docker **metadata** only; it never touches the network,
-so its network findings (reachability, exposed ports, the PLC on the ICS net) are
-unverified claims. Phase 2 (`verify`) tests them on the wire with two active MCP
-servers — **NmapMCP** (reachability / service) and **modbus-mcp** (ICS protocol
-reads) — and records, per claim, `observed | not_reproduced | not_tested` plus the
-exact tool output.
+Phase 1 (`assess`) reads Docker **metadata** only; it never touches the network.
+Phase 2 (`network`) is a **separate, independent agent** (`NetworkExposureAgent`)
+that assesses the lab on the wire with two active MCP servers — **NmapMCP**
+(reachability / service) and **modbus-mcp** (ICS protocol reads). It does **not**
+read Phase 1's report, findings or claims: both agents pursue the same goal — how
+close can an attacker get to the physical process — by two independent methods
+(static Docker metadata vs. live network), so their reports can be reconciled
+afterwards.
+
+From its network position it sweeps the permitted subnets, service-scans the live
+hosts it finds, reads the PLC's Modbus registers to confirm a real controller, and
+records one section per host.
 
 **Vantage point (Option A).** The nmap/modbus servers run as stdio subprocesses
-*inside the agent container*; to give them the kali network position, run `verify`
-with the agent container attached to the GRFICS ICS and DMZ networks:
+*inside the agent container*; to give them the kali network position, run `network`
+with the agent container attached to the GRFICS DMZ and admin networks:
 
 ```bash
 docker compose -f deploy/agent/compose.yml \
                -f deploy/agent/compose.grfics.example.yml \
-               run --rm agent verify
+               run --rm agent network
 ```
 
-- `verify` reads the **latest** run's `agent_report.json` by default; pass
-  `--run run-YYYYMMDD-HHMMSS-XXXX` to verify a specific run, `--model` to pick a
-  profile.
+- `network` is fully independent: it needs no prior run. `--model` picks a profile.
 - nmap is gated to the lab subnets (`192.168.95.0/24`, `192.168.90.0/24`) and the
   lab hostnames; modbus is pinned to `plc:502` (override with `GRFICS_PLC_HOST`).
-  Only Modbus **reads** are enabled this pass.
-- The report lands next to the Phase-1 report:
-  `outputs/<run_id>/verification_report.{json,md}` (copied to the Mac by `run.sh`,
-  like the other reports). It starts with the primary check — can kali reach
-  `plc:502`, and does a real Modbus device answer — then one block per claim with
-  the MCP tool calls logged beside each verdict.
+  Only Modbus **reads** are enabled.
+- The report is written in the **same shape as the Phase-1 agent report**:
+  `outputs/<run_id>/network_report.{json,md}` (copied to the Mac by `run.sh`, like
+  the other reports), where `<run_id>` is its own `net-YYYYMMDD-HHMMSS-XXXX`.
 
-Phase 1 is untouched: `verify` only reads the Phase-1 report and writes a new one.
+**Run both in sequence (optional).** The two phases are separate commands, but
+`assess --and-network` runs Phase 2 immediately after Phase 1 as a *separate*
+independent run (no shared data). A Phase-2 failure is reported but never fails the
+completed Phase 1:
+
+```bash
+docker compose -f deploy/agent/compose.yml \
+               -f deploy/agent/compose.grfics.example.yml \
+               run --rm agent assess --and-network --range-baseline clean-v2
+```
+
+Phase 1 is untouched either way: `network` reads nothing from it and writes its own
+report.
 
 ### 11. See every tool call the agent made
 

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Phase 2 (network verification) vantage point — "Option A", Kali-faithful.
+# Phase 2 (network exposure) vantage point — "Option A", Kali-faithful.
 #
 # NOT loaded by default (Compose ignores this file unless it is passed with
 # -f). It attaches the agent container to EXACTLY the networks the kali
@@ -16,7 +16,7 @@
 #
 #   docker compose -f deploy/agent/compose.yml \
 #                  -f deploy/agent/compose.grfics.example.yml \
-#                  run --rm agent verify
+#                  run --rm agent network
 #
 # The networks must already exist (GRFICS is started separately) and are
 # declared external, so this file never creates, changes or removes them.

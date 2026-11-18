@@ -10,7 +10,7 @@ Commands
   mcp tools            show the tools the agent will actually see
   inventory            collect and print a Docker inventory snapshot (read-only)
   assess               run a full assessment (see pipeline.py)
-  verify               Phase 2: verify a run's network claims with nmap + modbus
+  network              Phase 2: live network exposure assessment (nmap + modbus)
   runs                 list previous runs
   report --run-id ID   print a stored report: --kind agent | deterministic
 
@@ -471,12 +471,13 @@ def assess(
             "(see `docker-audit range`)"
         ),
     ] = None,
-    and_verify: Annotated[
+    and_network: Annotated[
         bool,
         typer.Option(
-            "--and-verify",
-            help="After Phase 1, immediately run Phase 2 (verify) on this run's report. "
-            "Needs the nmap/modbus servers and the agent attached to the GRFICS networks.",
+            "--and-network",
+            help="After Phase 1, also run Phase 2: the independent network exposure "
+            "agent (a separate run, no shared data). Needs the nmap/modbus servers and "
+            "the agent attached to the GRFICS networks.",
         ),
     ] = False,
 ) -> None:
@@ -534,74 +535,63 @@ def assess(
         for e in result.report.errors[:10]:
             console.print(f"  - {e[:300]}")
 
-    # Optional chain: Phase 2 reads the agent report Phase 1 just wrote. A
-    # verify failure (e.g. the Phase-2 servers can't connect) is reported but
-    # never fails the completed assessment.
-    if and_verify:
-        if not result.agent_report:
-            console.print("[yellow]--and-verify skipped:[/yellow] this run produced no agent report.")
-        else:
-            console.print("\n[dim]• Phase 2 — verifying network claims...[/dim]")
-            # Chained from a completed assessment: a verify failure is reported
-            # but does not change the assess exit status.
-            _run_verify(settings, model=model, run=result.run_id, skip_model_check=skip_model_check)
+    # Opt-in chain: run Phase 2 as a SEPARATE, independent run right after Phase 1.
+    # The two phases share no data - this is only a convenience for running them in
+    # sequence. A Phase-2 failure is reported but never fails the completed Phase 1.
+    if and_network:
+        console.print("\n[dim]• Phase 2 — live network exposure assessment...[/dim]")
+        _run_network(settings, model=model, skip_model_check=skip_model_check)
 
 
-def _run_verify(
-    settings: Settings, *, model: str | None, run: str | None, skip_model_check: bool
-) -> bool:
-    """Run Phase 2 and print its result. Returns False on abort/config error.
+def _run_network(settings: Settings, *, model: str | None, skip_model_check: bool) -> bool:
+    """Run Phase 2 (network exposure) and print its result; False on abort/config error.
 
-    Shared by `verify` and `assess --and-verify`; the caller decides whether a
-    failure should set a non-zero exit code.
+    Shared by the `network` command and `assess --and-network`.
     """
-    from docker_security_agent.verification_pipeline import (
-        VerificationAborted,
-        VerifyOptions,
-        run_verification,
+    from docker_security_agent.network_assessment_pipeline import (
+        NetworkAssessmentAborted,
+        NetworkOptions,
+        run_network_assessment,
     )
 
     try:
-        opts = VerifyOptions(model_profile=model, run_id=run, skip_model_check=skip_model_check)
+        opts = NetworkOptions(model_profile=model, skip_model_check=skip_model_check)
         opts.progress = lambda msg: console.print(f"[dim]•[/dim] {msg}")
-        result = asyncio.run(run_verification(settings, opts))
-    except (ConfigError, VerificationAborted) as exc:
-        console.print(f"[red]Verification not started/aborted:[/red] {exc}")
+        result = asyncio.run(run_network_assessment(settings, opts))
+    except (ConfigError, NetworkAssessmentAborted) as exc:
+        console.print(f"[red]Network assessment not started/aborted:[/red] {exc}")
         return False
 
     console.print()
     console.print(
-        f"[bold]Verify {result.run_id}[/bold]: {result.status} — "
-        f"{result.records} claim(s) recorded"
+        f"[bold]Network {result.run_id}[/bold]: {result.status} — {result.findings} finding(s)"
     )
-    console.print(f"Source Phase-1 report: {result.source_report}")
-    console.print(f"Verification report:   {result.report_md_path}")
+    console.print(f"Network report: {result.report_md_path}")
     return True
 
 
 # ---------------------------------------------------------------------------
-# verify (Phase 2 — network verification)
+# network (Phase 2 - live network exposure assessment)
 # ---------------------------------------------------------------------------
 
 
 @app.command()
-def verify(
+def network(
     model: Annotated[str | None, typer.Option(help="Model profile from config/models.yaml")] = None,
-    run: Annotated[
-        str | None,
-        typer.Option(help="Phase-1 run id to verify (default: the latest run with an agent report)"),
-    ] = None,
     skip_model_check: Annotated[bool, typer.Option(help="Skip capability preflight")] = False,
 ) -> None:
-    """Phase 2: verify a Phase-1 run's network claims on the wire with nmap + modbus.
+    """Phase 2: live network exposure assessment with nmap + modbus.
 
-    Reads outputs/<RUN>/agent_report.json, actively tests each network claim
-    (starting with kali -> plc:502), and writes outputs/<RUN>/verification_report.{json,md}.
-    Needs the nmap/modbus MCP servers and the agent attached to the GRFICS networks
+    Runs the NetworkExposureAgent INDEPENDENTLY of Phase 1 - it reads no Phase-1
+    report or claims. It sweeps the lab's own subnets (from the nmap safety
+    policy), service-scans live hosts, reads the PLC's Modbus registers to
+    confirm a real controller, and writes outputs/<RUN>/network_report.{json,md}
+    in the same shape as the Phase-1 agent report. Needs the nmap/modbus MCP
+    servers and the agent attached to the GRFICS networks
     (see deploy/agent/compose.grfics.example.yml).
     """
     settings = _settings()
-    if not _run_verify(settings, model=model, run=run, skip_model_check=skip_model_check):
+    if not _run_network(settings, model=model, skip_model_check=skip_model_check):
         raise typer.Exit(1)
 
 
