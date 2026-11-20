@@ -242,11 +242,15 @@ def test_prompt_has_the_plan_in_the_process_steps():
     assert PLAN_SECTION in instructions
     # WHEN to update lives in PROCESS: after the sweep (1), after a section (2c), 2d
     process = instructions[instructions.index("PROCESS") : instructions.index("YOUR PLAN")]
-    assert "coverage checklist.\n   Then write your plan with ONE update_plan call" in process
+    assert (
+        "coverage checklist.\n   Then, BEFORE you scan any host, write your plan with ONE "
+        "update_plan call" in process
+    )
+    assert "your only memory" in process and "How to call it: update_plan" in process
     assert "Then call update_plan with that host's step marked done." in process
     assert "   d. If a step fails or cannot be done" in process and "mark it blocked" in process
     assert process.index("marked done") < process.index("Do not stop after the first")
-    assert NET_PROMPT_VERSION == "nx10"
+    assert NET_PROMPT_VERSION == "nx11"
 
 
 def test_network_settings_default_and_read_from_yaml():

@@ -63,7 +63,11 @@ AGENT_NAME = "NetworkExposureAgent"
 #         gateways too) + final assessment, plus any other steps it thinks the task
 #         needs (e.g. cross-network reachability). The worked example is removed: the
 #         nx7 model copied its wording for every host and planned nothing else.
-NET_PROMPT_VERSION = "nx10"
+#   nx11 - step 1 says WHY the plan matters (earlier thinking is not shown again; the
+#         plan is the agent's only memory), that it comes BEFORE any host scan, and
+#         HOW to call update_plan in words (no example step to copy). nx10's model
+#         skipped the plan without the example.
+NET_PROMPT_VERSION = "nx11"
 
 INSTRUCTIONS = f"""\
 You are {AGENT_NAME} (prompt {NET_PROMPT_VERSION}), a defensive ICS network analyst.
@@ -108,11 +112,19 @@ PROCESS (you decide which tools to call, in what order, and when to stop)
    nmap_scan(target="192.168.95.0/24")). It checks a fixed list of common IT and ICS
    ports, including Modbus 502; do NOT deep-scan every address. List every live host and
    the ports that respond. This is your coverage checklist.
-   Then write your plan with ONE update_plan call. It is YOUR plan: include at least
-   one step for every live host you found (routers and gateways too) and a last step
-   for the final assessment, and add any other steps you think the task needs - for
-   example checking whether a host on one network can reach the PLC network. Put the
-   steps in the order you will work on them; every step starts with status "todo".
+   Then, BEFORE you scan any host, write your plan with ONE update_plan call.
+   Why it matters: your earlier thinking is NOT shown to you again. Your plan is
+   shown at the end of every turn, so it is your only memory of what you decided,
+   what is done and what is left. Without it you will lose track of hosts or repeat
+   work.
+   How to call it: update_plan(steps=[...]). Each step is an object with "text" (one
+   short sentence in your own words: which host, or which check, and what you will
+   do) and "status" ("todo" for every step when you first write the plan).
+   It is YOUR plan: include at least one step for every live host you found (routers
+   and gateways too) and a last step for the final assessment, and add any other
+   steps you think the task needs - for example checking whether a host on one
+   network can reach the PLC network. Put the steps in the order you will work on
+   them.
 2. WORK INWARD, toward the PLC. For each live host, ONE AT A TIME:
    a. service_scan it to identify the services behind its common ports (service_scan does
       not cover ICS ports such as 502: those come from your sweep). Decide whether
