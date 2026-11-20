@@ -65,7 +65,8 @@ __version__ = "0.1.0"
 #         (Trivy) and the prompt never mentions it; every finding is a
 #         config/network finding with vulnerability_ids [] (assess the agent
 #         without vulnerability scanning)
-PROMPT_VERSION = "v14"
+#   v15 - findings have no vulnerability_ids field at all (CVEs are not reported)
+PROMPT_VERSION = "v15"
 
 # Bumped whenever the harness around the agent changes what the model sees or
 # can do, independently of the prompt text. Recorded in every run manifest.
@@ -89,4 +90,6 @@ PROMPT_VERSION = "v14"
 #        write-time check: a section whose CVE IDs are not in that container's own
 #        Trivy results (or that puts CVEs on a configuration finding) is not saved,
 #        and the agent is told what to fix (after 2 tries the bad IDs are removed)
-HARNESS_VERSION = "h5"
+#   h6 - no vulnerability_ids in agent findings, so the CVE write-time check is gone:
+#        record_container_section always saves; Phase 2 no longer strips CVE IDs
+HARNESS_VERSION = "h6"

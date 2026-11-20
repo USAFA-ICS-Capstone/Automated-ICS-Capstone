@@ -15,13 +15,13 @@ from agents.testing import ScriptedModel, assistant_message, function_call
 from builders import build_snapshot
 
 from docker_security_agent.agents.context_filter import ContextFilter
-from docker_security_agent.agents.harness_tools import build_harness_tools
 from docker_security_agent.agents.security_assessment import (
     build_agent,
     build_input,
     merge_sections,
     run_agent,
 )
+from docker_security_agent.agents.security_tools import build_harness_tools
 from docker_security_agent.config import ConfigError, ModelProfile
 from docker_security_agent.llm.factory import ModelBundle
 from docker_security_agent.mcp.evidence import EvidenceStore
@@ -46,13 +46,12 @@ def _bundle(model) -> ModelBundle:
     return ModelBundle(model=model, settings=ModelSettings(), profile=profile)
 
 
-def _finding(resource, title, field, value, *, severity="high", tool="container_inspect", vulns=()):
+def _finding(resource, title, field, value, *, severity="high", tool="container_inspect"):
     return {
         "title": title,
         "resource_name": resource,
         "severity": severity,
         "evidence": [{"tool": tool, "field": field, "value": value}] if field else [],
-        "vulnerability_ids": list(vulns),
         "explanation": "pivot into the process network",
     }
 
@@ -83,7 +82,6 @@ SIM_CVE = _finding(
     "",
     severity="medium",
     tool="findings_list",
-    vulns=["CVE-2026-103111"],
 )
 GHOST = _finding("ghost-container", "Invented", "HostConfig.Privileged", "true")
 
@@ -286,19 +284,9 @@ async def test_full_live_pipeline_with_fakes(pipeline_env):
     holder["model"] = ScriptedModel(
         [
             [function_call("container_inspect", {"id_or_name": "simulation"}, call_id="c1")],
-            # not among the 3 scanned images -> refused: the agent may only scan
-            # what the answer key covers
-            [
-                function_call(
-                    "scan_image",
-                    {
-                        "target": "fortiphyd/grfics-workstation:latest",
-                        "targetType": "image",
-                        "scanType": [],
-                    },
-                    call_id="c2",
-                )
-            ],
+            # prompt v14: the agent has no image scanner (Trivy is withheld), so
+            # it only inspects Docker configuration
+            [function_call("container_inspect", {"id_or_name": "router"}, call_id="c2")],
             [assistant_message(_final_json(SOCKET, ROUTER_CAPS, SIM_CVE, GHOST))],
         ]
     )
@@ -332,8 +320,10 @@ async def test_full_live_pipeline_with_fakes(pipeline_env):
     agent_calls = [(c["server"], c["tool"], c["status"]) for c in calls if c["phase"] == "agent"]
     assert agent_calls == [
         ("docker", "container_inspect", "ok"),
-        ("trivy", "scan_image", "blocked"),
+        ("docker", "container_inspect", "ok"),
     ]
+    # v14: Trivy is never offered to the agent, so no agent-phase call reaches it
+    assert not any(c["server"] == "trivy" for c in calls if c["phase"] == "agent")
     assert repo.load_report(result.run_id).run_id == result.run_id
     assert repo.load_agent_report(result.run_id).findings[0].title == "Docker socket mounted"
     repo.close()
@@ -439,8 +429,8 @@ async def test_live_run_writes_immutable_manifest(pipeline_env):
     exp = m["experiment"]
     assert exp["scenario_id"] == settings.experiment.scenario_id
     assert exp["evidence"]["snapshot_id"] == result.report.snapshot_id
-    assert exp["prompt_bundle"]["version"] == "v13"
-    assert exp["prompt_bundle"]["harness_version"] == "h5"
+    assert exp["prompt_bundle"]["version"] == "v15"
+    assert exp["prompt_bundle"]["harness_version"] == "h6"
     assert exp["agent"]["keep_recent_tool_outputs"] == 8
     assert exp["schema_versions"]["db_schema_version"] >= 4
     assert exp["models"]["assessment_agent"]["model"] == "scripted"

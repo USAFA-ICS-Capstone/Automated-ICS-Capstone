@@ -102,27 +102,41 @@ servers:
       - check_single_port   # one port, e.g. kali -> plc:502
       - quick_scan          # fast open-port sweep
       - service_scan        # service/version (-sV)
+      - nmap_scan           # ICS-aware sweep: flags FORCED by argument_policy.nmap.forced_flags
 
-  # modbus-mcp (kukapay): ICS protocol reads. The PLC target is pinned by env
-  # (MODBUS_HOST/PORT), not by a tool argument, so no argument gate is needed.
-  # Only READ tools are approved this pass; write_register/write_coil are left
-  # out of the allow-list (they belong to the later attacker-analysis phase).
+  # modbus-mcp (ezhuk): ICS protocol reads. Each tool takes a per-call `host`, so
+  # the agent can read a specific field device (192.168.95.10-15), not only the
+  # PLC. The host is gated to the lab by argument_policy.modbus below.
+  #
+  # ezhuk's packaged entry point forces HTTP; we launch the SAME server over stdio
+  # with a one-line shim (no code change). Default device (when a call omits host)
+  # comes from MODBUS_MCP_MODBUS__HOST (ezhuk's env prefix + nested delimiter).
+  #
+  # Only READ tools are approved: read_registers (holding 40001+, input 30001+)
+  # and read_coils. The 6 write tools and read_discrete_inputs / read_information /
+  # read_exception are left off the allow-list (hidden from the model and blocked
+  # at call time).
   modbus:
     enabled: true
     role: ics_protocol
     command: uv
-    args: ["--directory", "${MODBUS_MCP_DIR:-/opt/modbus-mcp}", "run", "--no-sync", "modbus-mcp"]
+    args:
+      - "--directory"
+      - "${MODBUS_MCP_DIR:-/opt/modbus-mcp}"
+      - "run"
+      - "--no-sync"
+      - "python"
+      - "-c"
+      - "import asyncio; from modbus_mcp.server import ModbusMCP; asyncio.run(ModbusMCP().run_async(transport='stdio'))"
     env:
       UV_PROJECT_ENVIRONMENT: "${MODBUS_MCP_DIR:-/opt/modbus-mcp}/.venv"
-      MODBUS_TYPE: "${MODBUS_TYPE:-tcp}"
-      MODBUS_HOST: "${MODBUS_HOST:-plc}"
-      MODBUS_PORT: "${MODBUS_PORT:-502}"
+      MODBUS_MCP_MODBUS__HOST: "${GRFICS_PLC_HOST:-plc}"
+      MODBUS_MCP_MODBUS__PORT: "${GRFICS_PLC_PORT:-502}"
+      MODBUS_MCP_MODBUS__UNIT: "${GRFICS_PLC_UNIT:-1}"
     client_session_timeout_seconds: 60
     allowed_tools:
-      - read_register
-      - read_input_registers
+      - read_registers
       - read_coils
-      - read_multiple_holding_registers
 
 # Per-tool argument rules enforced by mcp/policy.py.
 argument_policy:
@@ -148,3 +162,25 @@ argument_policy:
       - router
       - caldera
       - simulation
+    # Tools whose `flags` argument is always replaced with these (the model never
+    # picks nmap flags). nmap_scan becomes the ICS-aware sweep: quick_scan/-F and
+    # service_scan's top-1000 do NOT include Modbus 502 or most ICS ports.
+    #   IT: 21 ftp, 22 ssh, 23 telnet, 80/443/8000/8080/8443 web, 445 smb,
+    #       3389 rdp, 5900 vnc
+    #   ICS: 102 S7, 502 Modbus, 1911 Niagara Fox, 2404 IEC-104, 4840 OPC UA,
+    #        20000 DNP3, 44818 EtherNet/IP
+    # Connect scan (-sT): the agent container is not root.
+    forced_flags:
+      nmap_scan: "-sT -Pn -T4 --open -p 21,22,23,80,102,443,445,502,1911,2404,3389,4840,5900,8000,8080,8443,20000,44818"
+
+  # Phase 2: a Modbus read may only target the lab. `host` is optional - omitting
+  # it reads the server's default device (the PLC). When given, it must be a lab
+  # hostname or an IP/subnet inside the ICS segment (covers the field devices
+  # 192.168.95.10-15). Only read tools are approved, so there is nothing else to
+  # gate.
+  modbus:
+    restrict_hosts: true
+    allowed_cidrs:
+      - 192.168.95.0/24   # grficsv3_b-ics-net (PLC + field devices)
+    allowed_hostnames:
+      - plc

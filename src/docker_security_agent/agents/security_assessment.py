@@ -133,8 +133,6 @@ these fields:
   - severity: critical / high / medium / low
   - evidence: the tool that produced the value (e.g. container_inspect),
     the field path (e.g. HostConfig.Privileged), and the value you saw
-  - vulnerability_ids: always an empty list [] (this run assesses
-    configuration and isolation only, not image vulnerabilities)
   - explanation: one or two sentences on why this matters for the physical
     process — what access it gives or what isolation it weakens
 When you read a result through evidence_get, cite the original tool.
@@ -190,7 +188,7 @@ def build_agent(
     *,
     # mcp_servers	Gives the agent access to external tools, such as Docker inspection and Trivy
     mcp_servers: list[GuardedMCPServer],
-    # tools	The harness tools (evidence_get, record_container_section; see harness_tools.py)
+    # tools	The harness tools (evidence_get, record_container_section; see security_tools.py)
     tools: list[FunctionTool] | None = None,
 ) -> Agent:
     """Create the single assessment agent for a given model."""
@@ -269,9 +267,7 @@ def _usage_of(context_wrapper: Any) -> dict[str, int]:
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
-def parse_assessment_text(
-    text: str, model: type[BaseModel] = AgentAssessment
-) -> BaseModel:
+def parse_assessment_text(text: str, model: type[BaseModel] = AgentAssessment) -> BaseModel:
     """Parse a prompted-mode answer: tolerate <think> blocks and ```json fences.
 
     ``model`` is the Pydantic type to validate into (AgentAssessment for Phase 1;
@@ -427,8 +423,10 @@ def merge_sections(outcome: AgentRunOutcome, sections: list[ContainerSection]) -
         ),
         overall_risk=_RISK_OF[ranks[worst]],  # type: ignore[arg-type]
         findings=found,
-        limitations=[f"The agent did not finish ({outcome.status}); "
-                     "containers without a recorded section were not reported.",
-                     *(n for s in sections for n in s.notes)],
+        limitations=[
+            f"The agent did not finish ({outcome.status}); "
+            "containers without a recorded section were not reported.",
+            *(n for s in sections for n in s.notes),
+        ],
     )
     outcome.partial = True

@@ -46,7 +46,6 @@ from agents import set_tracing_disabled
 
 from docker_security_agent import HARNESS_VERSION, PROMPT_VERSION
 from docker_security_agent.agents.context_filter import ContextFilter
-from docker_security_agent.agents.harness_tools import build_harness_tools
 from docker_security_agent.agents.security_assessment import (
     AgentRunOutcome,
     build_agent,
@@ -54,6 +53,7 @@ from docker_security_agent.agents.security_assessment import (
     merge_sections,
     run_agent,
 )
+from docker_security_agent.agents.security_tools import build_harness_tools
 from docker_security_agent.config import ConfigError, Settings
 from docker_security_agent.inventory.baseline import (
     AUDIT_RESOURCE_PREFIX,
@@ -636,7 +636,6 @@ async def _agent_phase(
     )
     if outcome.partial:
         outcome.error = (
-            (outcome.error + " | " if outcome.error else "")
-            + f"partial assessment built from {len(store.sections)} recorded container sections"
-        )
+            outcome.error + " | " if outcome.error else ""
+        ) + f"partial assessment built from {len(store.sections)} recorded container sections"
     return outcome

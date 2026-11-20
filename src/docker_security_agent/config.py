@@ -113,11 +113,19 @@ class SessionConfig(BaseModel):
     db_path: str = "data/agent_sessions.db"
 
 
+class NetworkAgentSettings(BaseModel):
+    """Phase-2 (network agent) context options (h7). The plan (update_plan) is always on."""
+
+    # Leave the model's earlier thinking out of every request (the session keeps it).
+    drop_old_thinking: bool = False
+
+
 class AgentConfig(BaseModel):
     name: str = "DockerSecurityAssessmentAgent"
     limits: AgentLimits = Field(default_factory=AgentLimits)
     session: SessionConfig = Field(default_factory=SessionConfig)
     tracing_enabled: bool = False
+    network: NetworkAgentSettings = Field(default_factory=NetworkAgentSettings)
 
 
 # ---------------------------------------------------------------------------
@@ -161,11 +169,31 @@ class NmapScanPolicy(BaseModel):
     """Keep the Phase 2 active nmap scans inside the lab (argument-level gate).
 
     Unlike the read-only Phase 1 tools, nmap sends packets. A scan is refused
-    unless its ``target`` is an IP inside one of ``allowed_cidrs`` or a hostname
-    in ``allowed_hostnames`` (the lab container names). Logged either way.
+    unless its ``target`` is an IP or subnet inside one of ``allowed_cidrs`` or a
+    hostname in ``allowed_hostnames`` (the lab container names). Logged either way.
+
+    ``forced_flags`` maps a tool name to the nmap flags it always runs with: the
+    model's own ``flags`` argument is replaced, so a free-form tool such as
+    ``nmap_scan`` becomes one fixed, reviewed scan.
     """
 
     restrict_targets: bool = True
+    allowed_cidrs: list[str] = Field(default_factory=list)
+    allowed_hostnames: list[str] = Field(default_factory=list)
+    forced_flags: dict[str, str] = Field(default_factory=dict)
+
+
+class ModbusHostPolicy(BaseModel):
+    """Keep Phase 2 Modbus reads inside the lab (argument-level gate).
+
+    The Modbus server takes a per-call ``host``. A read is refused unless ``host``
+    (when given) is an IP or subnet inside one of ``allowed_cidrs`` or a name in
+    ``allowed_hostnames``. When ``host`` is omitted the server's configured
+    default (the PLC) is used, which is always allowed. Reads only: no write tools
+    are on the server's approved-tool list.
+    """
+
+    restrict_hosts: bool = True
     allowed_cidrs: list[str] = Field(default_factory=list)
     allowed_hostnames: list[str] = Field(default_factory=list)
 
@@ -173,6 +201,7 @@ class NmapScanPolicy(BaseModel):
 class ArgumentPolicy(BaseModel):
     scan_image: ScanImagePolicy = Field(default_factory=ScanImagePolicy)
     nmap: NmapScanPolicy = Field(default_factory=NmapScanPolicy)
+    modbus: ModbusHostPolicy = Field(default_factory=ModbusHostPolicy)
 
 
 class MCPConfig(BaseModel):

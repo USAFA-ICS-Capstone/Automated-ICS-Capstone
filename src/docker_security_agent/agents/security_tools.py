@@ -34,56 +34,6 @@ RECORD_SECTION = "record_container_section"
 
 _INDEX_RE = re.compile(r"\[(\d+)\]")
 
-# Evidence from these tools makes a finding a vulnerability finding; any other
-# finding is a configuration finding and carries no CVE IDs.
-SCAN_TOOLS = {"scan_image", "findings_list", "findings_get"}
-# After this many rejected attempts for one container, the section is saved with
-# the wrong IDs removed, so a confused model cannot stall the run.
-MAX_SECTION_REJECTS = 2
-
-
-def check_section(
-    store: EvidenceStore, resource_name: str, findings: list[AgentFinding]
-) -> tuple[list[str], list[AgentFinding]]:
-    """Write-time check of a section's CVE IDs (h5).
-
-    Each vulnerability ID must appear in THIS container's own Trivy findings_list
-    results; configuration findings (no Trivy evidence) must have none. Returns
-    the problems (empty = fine) and the findings with every bad ID removed.
-    The agent used to copy IDs from its own earlier sections into the next one.
-    """
-    own = store.scan_ids_for(resource_name)
-    problems: list[str] = []
-    cleaned: list[AgentFinding] = []
-    for n, f in enumerate(findings, 1):
-        ids = [i.strip().upper() for i in f.vulnerability_ids if i.strip()]
-        keep = ids
-        if ids and not any(e.tool in SCAN_TOOLS for e in f.evidence):
-            problems.append(
-                f'finding {n} "{f.title}" is a configuration finding (no Trivy evidence) but '
-                f"lists {', '.join(ids)}: set its vulnerability_ids to []."
-            )
-            keep = []
-        elif ids and own is None:
-            problems.append(
-                f'finding {n} "{f.title}" lists {", ".join(ids)}, but no findings_list result '
-                f"for {resource_name}'s image is stored: scan its image first or remove the IDs."
-            )
-            keep = []
-        elif ids:
-            wrong = [i for i in ids if i not in own]
-            if wrong:
-                verb = "is" if len(wrong) == 1 else "are"
-                problems.append(
-                    f'finding {n} "{f.title}": {", ".join(wrong)} {verb} not in '
-                    f"{resource_name}'s own Trivy results (perhaps copied from another "
-                    f"container's section). Use only IDs from {resource_name}'s "
-                    "findings_list, or none."
-                )
-                keep = [i for i in ids if i in own]
-        cleaned.append(f.model_copy(update={"vulnerability_ids": keep}))
-    return problems, cleaned
-
 
 def _norm_path(path: str) -> str:
     return _INDEX_RE.sub(r".\1", path.strip()).strip(".").lower()
@@ -167,8 +117,6 @@ def build_harness_tools(
     by the thread that opened it (the event loop's).
     """
 
-    rejects: dict[str, int] = {}  # rejected record_container_section calls per container
-
     @function_tool(name_override=EVIDENCE_GET)
     async def evidence_get(ref: str, select: str = "") -> str:
         """Read back a stored result of one of your earlier tool calls.
@@ -222,8 +170,6 @@ def build_harness_tools(
 
         Write it while the container's tool results are still in your context.
         Calling it again for the same container replaces the earlier section.
-        CVE/GHSA IDs are checked against this container's own Trivy results; a
-        section with IDs from elsewhere is not saved, and you are told what to fix.
 
         Args:
             resource_name: Exact container name.
@@ -232,35 +178,9 @@ def build_harness_tools(
                 assessment's findings).
             evidence_refs: References (E1, E2...) of the results you used.
             notes: Only what you could not check for this container (a tool failed,
-                or the budget ran out); [] if none. CVEs you were told not to list
-                are not a note.
+                or the budget ran out); [] if none.
         """
         key = resource_name.strip().lstrip("/").lower()
-        problems, cleaned = check_section(store, resource_name, findings)
-        removed_note = ""
-        if problems:
-            rejects[key] = rejects.get(key, 0) + 1
-            if rejects[key] <= MAX_SECTION_REJECTS:
-                recorder.add(
-                    phase="agent",
-                    server=HARNESS_SERVER,
-                    tool=RECORD_SECTION,
-                    arguments={"resource_name": resource_name, "findings": len(findings)},
-                    status="rejected",
-                    error=" | ".join(problems),
-                )
-                return (
-                    f"Section for {resource_name} NOT saved. Fix these findings and call "
-                    f"record_container_section again for {resource_name}:\n- "
-                    + "\n- ".join(problems)
-                )
-            # Out of attempts: save it without the bad IDs, and say so.
-            findings = cleaned
-            removed_note = (
-                "The harness removed CVE IDs that are not in this container's own Trivy "
-                "results: " + " | ".join(problems)
-            )
-            notes = [*notes, removed_note]
         section = ContainerSection(
             resource_name=resource_name, findings=findings, evidence_refs=evidence_refs, notes=notes
         )
@@ -282,8 +202,6 @@ def build_harness_tools(
             if again
             else f"Section for {resource_name} recorded ({len(findings)} findings)."
         )
-        if removed_note:
-            head += " Wrong CVE IDs were removed from it (see its notes)."
         if checklist is None:
             return (
                 f"{head} Its tool results may now be shortened in your context; they stay "

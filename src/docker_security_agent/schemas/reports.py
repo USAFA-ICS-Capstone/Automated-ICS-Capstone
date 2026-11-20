@@ -47,12 +47,6 @@ class AgentFinding(BaseModel):
     resource_name: str = Field(description="Exact name of the affected container, image or network")
     severity: Literal["critical", "high", "medium", "low", "info"]
     evidence: list[AgentEvidence]
-    vulnerability_ids: list[str] = Field(
-        description=(
-            "The ONE CVE/GHSA ID of this vulnerability finding, copied from Trivy "
-            "findings for this resource; [] for other findings"
-        )
-    )
     explanation: str = Field(description="Why this matters in an OT/ICS context")
 
 
@@ -71,7 +65,7 @@ class ContainerSection(BaseModel):
     )
     notes: list[str] = Field(
         description="Only what you could not check for this container (a tool failed, or "
-        "the budget ran out); [] if none. CVEs you were told not to list are not a note"
+        "the budget ran out); [] if none"
     )
 
 

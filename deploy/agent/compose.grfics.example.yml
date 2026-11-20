@@ -2,48 +2,53 @@
 # Phase 2 (network exposure) vantage point — "Option A", Kali-faithful.
 #
 # NOT loaded by default (Compose ignores this file unless it is passed with
-# -f). It attaches the agent container to EXACTLY the networks the kali
-# container is on — the DMZ and the admin bridge — so the nmap/modbus MCP
-# servers (stdio subprocesses INSIDE the agent container) probe the PLC from
-# the same vantage point a DMZ attacker has, without running anything inside
-# kali.
+# -f). The agent container JOINS THE KALI CONTAINER'S NETWORK STACK
+# (network_mode: container:kali): same interfaces, same IPs, same routing
+# table as kali, so the nmap/modbus MCP servers (stdio subprocesses INSIDE the
+# agent container) probe the lab from exactly the position a DMZ attacker on
+# kali has, without running anything inside kali itself.
 #
-# Deliberately NOT on the ICS network (b-ics-net): giving the agent a direct
-# interface on the plant floor would let it reach the PLC without crossing the
-# DMZ->ICS boundary, which is the very thing under test. On this bridge lab the
-# PLC's hostname ("plc") resolves to its admin-bridge IP, so the agent reaches
-# plc:502 over the shared admin bridge exactly as kali does.
+# Why not attach the agent to kali's networks instead (the old way)? Attaching
+# gives the same subnets but NOT kali's routes. kali reaches the ICS network
+# through the GRFICS router (192.168.95.0/24 via 192.168.90.200) and its
+# default route is the admin bridge; an attached agent had neither, so its
+# packets to 192.168.95.x left through Docker's default network and the ICS
+# sweep timed out (net-20261118-165111-a208). Sharing kali's stack copies
+# nothing by hand, so it cannot drift from kali.
 #
 #   docker compose -f deploy/agent/compose.yml \
 #                  -f deploy/agent/compose.grfics.example.yml \
 #                  run --rm agent network
 #
-# The networks must already exist (GRFICS is started separately) and are
-# declared external, so this file never creates, changes or removes them.
-# Their names are <GRFICS compose project>_<network>, e.g. grficsv3_b-ics-net;
-# check with `docker network ls`.
-#
-# Attaching only changes which IP networks the agent container has interfaces
-# on. It adds no tools: the agent is still limited to the approved MCP tools in
-# config/mcp_servers.yaml, and nmap is still gated to the lab subnets.
+# Requirements and side effects:
+# - kali must be running (start GRFICS first). If kali restarts during a run,
+#   the agent loses its network.
+# - The agent's traffic leaves with kali's IP addresses, as a real attacker on
+#   kali would.
+# - The name host.docker.internal does NOT resolve inside kali's stack (it came
+#   from extra_hosts, which network_mode: container:... does not allow), so the
+#   model endpoints below use Docker Desktop's host-gateway IP, 192.168.65.254
+#   (the Mac; the SSH tunnel to vLLM listens there). Check it with:
+#     docker run --rm --add-host probe:host-gateway alpine getent hosts probe
+#   and override with AGENT_HOST_GATEWAY_IP if it differs.
+# - The agent still has NO extra privileges (cap_drop ALL, non-root): it only
+#   uses kali's network, it cannot change it. It adds no tools either: the
+#   agent is still limited to the approved MCP tools in config/mcp_servers.yaml,
+#   and nmap is still gated to the lab subnets.
 # ---------------------------------------------------------------------------
 services:
   agent:
-    networks:
-      default: {}
-      grfics-dmz: {}     # 192.168.90.0/24 — the DMZ, where kali lives
-      grfics-admin: {}   # 172.18.0.0/16  — the admin bridge, kali's other interface
+    network_mode: "container:${GRFICS_KALI_CONTAINER:-kali}"
+    # Both conflict with network_mode: container:..., so clear the base file's.
+    networks: !reset {}
+    extra_hosts: !reset []
     environment:
-      # Point the modbus MCP server at the PLC on the ICS network. Use the
-      # GRFICS service name (Docker DNS) or the PLC's static IP.
-      MODBUS_HOST: ${GRFICS_PLC_HOST:-plc}
-      MODBUS_PORT: ${GRFICS_PLC_PORT:-502}
-      MODBUS_TYPE: tcp
-
-networks:
-  grfics-dmz:
-    external: true
-    name: ${GRFICS_DMZ_NETWORK:-grficsv3_c-dmz-net}
-  grfics-admin:
-    external: true
-    name: ${GRFICS_ADMIN_NETWORK:-grficsv3_a-grfics-admin}
+      VLLM_BASE_URL: http://${AGENT_HOST_GATEWAY_IP:-192.168.65.254}:8000/v1
+      OLLAMA_BASE_URL: http://${AGENT_HOST_GATEWAY_IP:-192.168.65.254}:11434/v1
+      # Point the modbus MCP server at the PLC. Use the GRFICS service name
+      # (Docker DNS, as kali resolves it) or the PLC's static IP.
+      # The modbus server's DEFAULT device (when a read omits host). The agent
+      # can also target any host in the ICS subnet per call (gated in
+      # config/mcp_servers.yaml -> argument_policy.modbus).
+      GRFICS_PLC_HOST: ${GRFICS_PLC_HOST:-plc}
+      GRFICS_PLC_PORT: ${GRFICS_PLC_PORT:-502}

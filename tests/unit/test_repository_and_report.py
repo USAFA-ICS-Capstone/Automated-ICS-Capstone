@@ -154,7 +154,6 @@ def _agent_outputs(snapshot, scans, findings):
                         tool="container_inspect", field="NetworkSettings.Networks", value="3"
                     )
                 ],
-                vulnerability_ids=[],
                 explanation="pivot",
             )
         ],
@@ -235,25 +234,25 @@ def test_agent_report_files(snapshot, settings, scans, tmp_path, repo):
 
 
 def test_agent_findings_are_reported_as_given():
-    """No validator: invented resources and wrong CVEs are kept as the agent wrote
-    them (status potential, confidence low); only exact repeats are dropped."""
+    """No validator: invented resources are kept as the agent wrote them (status
+    potential, confidence low); only exact repeats are dropped. No CVE references."""
     from docker_security_agent.reporting.agent_report import agent_findings
 
-    def finding(resource, title, cves=()):
+    def finding(resource, title):
         return AgentFinding(title=title, resource_name=resource, severity="high",
                             evidence=[AgentEvidence(tool="container_inspect",
                                                     field="Config.User", value="")],
-                            vulnerability_ids=list(cves), explanation="e")
+                            explanation="e")
 
     a = AgentAssessment(
         executive_summary="s", overall_risk="high", limitations=[],
-        findings=[finding("ghost-container", "Invented"), finding("plc", "Root", ["cve-1"]),
+        findings=[finding("ghost-container", "Invented"), finding("plc", "Root"),
                   finding("plc", "Root")],
     )
     out = agent_findings(a)
     assert [(f.resource_name, f.title) for f in out] == [("ghost-container", "Invented"),
                                                           ("plc", "Root")]
-    assert out[1].references == ["CVE-1"]
+    assert all(f.references == [] for f in out)
     assert all(f.status == "potential" and f.confidence == "low" for f in out)
 
 

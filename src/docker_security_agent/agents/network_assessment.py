@@ -34,7 +34,36 @@ AGENT_NAME = "NetworkExposureAgent"
 #         claim verification): sweep the permitted subnets, service-scan live
 #         hosts, read Modbus registers to confirm a real PLC, record one section
 #         per host. Same finding schema and severity rubric as the Phase-1 agent.
-NET_PROMPT_VERSION = "nx1"
+#   nx2 - sweep with nmap_scan (fixed IT + ICS port list incl. Modbus 502, flags
+#         forced by policy) instead of quick_scan, whose top-100 ports miss 502;
+#         subnet (CIDR) targets are now accepted by the policy.
+#   nx3 - findings have no vulnerability_ids field (CVEs are not reported).
+#   nx4 - Modbus server takes a per-call host: read EACH device by host
+#         (read_registers/read_coils, host=<ip>), so field devices 192.168.95.10
+#         -15 are read individually, not only the PLC. Addressing is data-model
+#         (holding 40001+, input 30001+, coils 1+).
+#   nx5 - YOUR PLAN section (then behind a plan_tool switch): the agent writes
+#         and rewrites its own plan with update_plan; the latest version is shown
+#         at the end of every request (Manus-style recitation, not checked by the
+#         harness). Reported as "nx5+plan" when on, "nx5" when off.
+#   nx6 - WHEN to update the plan moved into PROCESS (end of step 1, step 2c, new
+#         step 2d), where the model actually follows its instructions; YOUR PLAN
+#         keeps only how the plan works. nx5's model skipped the plan entirely.
+#         The plan is always on (no switch): update_plan is always offered.
+#   nx7 - step 1 spells out the first plan: ONE update_plan call, one step per live
+#         host in working order + "final assessment", all "todo", with a worked
+#         example (nx6 only said "one step per live host").
+#   nx8 - record_host_section replies only "This host is done." (its old reply said
+#         "Continue with the next live host", which the nx7 model followed instead of
+#         step 2c's update_plan).
+#   nx9 - update the plan whenever what the agent learns changes it (a host that is
+#         not what it expected, a step that no longer makes sense), not only for a new
+#         host/port; YOUR PLAN no longer says "only update it when PROCESS says so".
+#   nx10 - step 1: the plan is the agent's own - at least every live host (routers and
+#         gateways too) + final assessment, plus any other steps it thinks the task
+#         needs (e.g. cross-network reachability). The worked example is removed: the
+#         nx7 model copied its wording for every host and planned nothing else.
+NET_PROMPT_VERSION = "nx10"
 
 INSTRUCTIONS = f"""\
 You are {AGENT_NAME} (prompt {NET_PROMPT_VERSION}), a defensive ICS network analyst.
@@ -74,18 +103,28 @@ SEVERITY (judge by proximity to the physical process)
   low      - a host or port is reachable but has no clear path to the process
 
 PROCESS (you decide which tools to call, in what order, and when to stop)
-1. MAP THE REACHABLE NETWORK. From your position, host-discover the networks you are
-   assessing (named in your task). Start with a fast host-discovery / quick scan; do NOT
-   deep-scan every address. List every live host and the ports that respond. This is your
-   coverage checklist.
+1. MAP THE REACHABLE NETWORK. Sweep each network you are assessing (named in your task)
+   with ONE nmap_scan call per network, using the subnet as the target (e.g.
+   nmap_scan(target="192.168.95.0/24")). It checks a fixed list of common IT and ICS
+   ports, including Modbus 502; do NOT deep-scan every address. List every live host and
+   the ports that respond. This is your coverage checklist.
+   Then write your plan with ONE update_plan call. It is YOUR plan: include at least
+   one step for every live host you found (routers and gateways too) and a last step
+   for the final assessment, and add any other steps you think the task needs - for
+   example checking whether a host on one network can reach the PLC network. Put the
+   steps in the order you will work on them; every step starts with status "todo".
 2. WORK INWARD, toward the PLC. For each live host, ONE AT A TIME:
-   a. service_scan it to identify open ports and the services behind them. Decide whether
+   a. service_scan it to identify the services behind its common ports (service_scan does
+      not cover ICS ports such as 502: those come from your sweep). Decide whether
       it is an ICS asset (PLC, HMI, engineering workstation, historian) or supporting
       infrastructure.
-   b. If a host answers on the Modbus port (given in your task), confirm whether it is a
-      real controller by READING its registers (read_register, read_input_registers,
-      read_coils, read_multiple_holding_registers). A real, readable process controller is
-      the most serious finding. Never write.
+   b. If a host answers on the Modbus port (502), confirm whether it is a real controller
+      by READING its registers WITH THAT HOST: read_registers(address=40001, count=10,
+      host="<that host's IP>") for holding registers (input registers start at 30001),
+      read_coils(address=1, count=10, host="<that host's IP>") for coils. ALWAYS pass host
+      so you read the device you are assessing, not a different one. Omitting host reads
+      the default PLC. A real, readable process controller - or a field device (valve /
+      sensor) that answers - is the most serious finding. Never write.
    c. Call record_host_section for that host before moving on.
       It takes four arguments:
         - resource_name: the host (its IP, or the container/service name if a scan
@@ -95,6 +134,11 @@ PROCESS (you decide which tools to call, in what order, and when to stop)
           (e.g. ["E1", "E4"])
         - notes: short strings for anything worth noting that is not a finding
           (e.g. "host up, all scanned ports filtered"). Pass [] if there are none.
+      Then call update_plan with that host's step marked done.
+   d. If a step fails or cannot be done (refused, no answer, the tool cannot do it),
+      mark it blocked in update_plan with the reason, and move on. If what you learn
+      changes your plan - a host or port you did not plan for, a host that is not what
+      you expected, or a step that no longer makes sense - update the plan to match.
    Do not stop after the first interesting host.
 3. TRACE REACHABILITY. After scanning the live hosts, identify the attack paths that are
    actually open from your position:
@@ -110,12 +154,9 @@ One issue per finding, one host per finding. Every finding has ALL of these fiel
   - title: short label (e.g. "Live Modbus PLC reachable", "HMI web port open from DMZ")
   - resource_name: the host (IP or name)
   - severity: critical / high / medium / low
-  - evidence: the tool that produced the result (e.g. service_scan,
-    read_multiple_holding_registers), the target or parameter (e.g. 192.168.95.10:502,
-    "holding registers 0-9"), and the result you observed (e.g. "open / Modbus",
-    "values [0,1,0,...]")
-  - vulnerability_ids: always an empty list [] (this run assesses live reachability and
-    exposure, not image vulnerabilities)
+  - evidence: the tool that produced the result (e.g. service_scan, read_registers), the
+    target or parameter (e.g. 192.168.95.10:502, "holding registers 40001-40010,
+    host=192.168.95.10"), and the result you observed (e.g. "open / Modbus", "0,0,1,...")
   - explanation: one or two sentences on why this matters for the physical process - what
     the reachable service or device lets an attacker do
 When you read a result through evidence_get, cite the original tool.
@@ -135,13 +176,31 @@ FINAL ASSESSMENT
   the budget ran out).
 
 TOOL NOTES
-- Scanning tools: check_single_port, quick_scan, service_scan. Modbus READ tools:
-  read_register, read_input_registers, read_coils, read_multiple_holding_registers.
+- Scanning tools: nmap_scan (your sweep: a fixed IT + ICS port list; any `flags` you pass
+  are ignored and replaced by that fixed scan), check_single_port, quick_scan (top 100
+  ports only - it misses Modbus 502), service_scan. A target is one lab hostname, one IP,
+  or one subnet inside the networks you are assessing. If a call is refused, do not repeat
+  it: change the target or move on. Modbus READ tools (each takes a per-call host, gated
+  to the ICS subnet): read_registers(address, count, host) - address 40001+ reads holding
+  registers, 30001+ reads input registers; read_coils(address, count, host). Pass host to
+  pick the device (e.g. a field device 192.168.95.14); omit it to read the default PLC.
 - Each tool result begins with a reference like [E7]. To save space, older results are
   later replaced by a one-line note that keeps the reference: evidence_get("E7") returns a
   result again, and select= returns one part of it.
 - A call repeated with identical arguments is not run again; you get the reference of the
   earlier result instead.
+"""
+
+PLAN_SECTION = """
+YOUR PLAN
+You keep your own plan with update_plan(steps); PROCESS says when to call it. Each step has
+a short `text` (e.g. "192.168.95.10: service_scan, read registers, record section") and a
+`status`: todo, doing, done or blocked.
+- Always pass the WHOLE plan: it replaces the previous one.
+- Update it whenever it no longer matches what you know (see PROCESS step 2c and 2d),
+  not after every tool call.
+- Your latest plan is shown at the end of the newest tool result every turn, under
+  "=== YOUR PLAN". Use it to decide your next step.
 """
 
 PROMPTED_OUTPUT_SUFFIX = """
@@ -159,9 +218,13 @@ def build_exposure_agent(
     mcp_servers: list[GuardedMCPServer],
     tools: list[FunctionTool] | None = None,
 ) -> Agent:
-    """Create the Phase-2 live-network exposure agent for a given model."""
+    """Create the Phase-2 live-network exposure agent for a given model.
+
+    ``tools`` must include update_plan (build_network_tools always adds it): the
+    PROCESS steps and the YOUR PLAN section tell the agent to use it.
+    """
     native = bundle.profile.structured_output == "native"
-    instructions = INSTRUCTIONS
+    instructions = INSTRUCTIONS + PLAN_SECTION
     if not native:
         schema = json.dumps(AgentAssessment.model_json_schema(), separators=(",", ":"))
         instructions += PROMPTED_OUTPUT_SUFFIX.format(schema=schema)

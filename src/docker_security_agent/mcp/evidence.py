@@ -73,6 +73,11 @@ class EvidenceStore:
     db_path: Path | str | None = None
     outputs: dict[str, StoredOutput] = field(default_factory=dict)
     sections: dict[str, ContainerSection] = field(default_factory=dict)
+    # The agent's own plan (update_plan, Phase 2): saved exactly as written and
+    # never checked. ``plan`` is the latest version; ``plan_versions`` keeps every
+    # version (with a timestamp) so a run's plan history can be written out.
+    plan: list[dict[str, Any]] | None = None
+    plan_versions: list[dict[str, Any]] = field(default_factory=list)
     _by_call: dict[str, str] = field(default_factory=dict)
     _conn: sqlite3.Connection | None = None
 
@@ -156,6 +161,20 @@ class EvidenceStore:
                     return out.subject
         return ""
 
+    # ---- the agent's plan ---------------------------------------------------
+
+    def save_plan(self, steps: list[dict[str, Any]]) -> int:
+        """Replace the plan with this version; return its version number (1, 2, ...)."""
+        self.plan = [dict(s) for s in steps]
+        self.plan_versions.append(
+            {
+                "version": len(self.plan_versions) + 1,
+                "saved_at": datetime.now(UTC).isoformat(),
+                "steps": self.plan,
+            }
+        )
+        return len(self.plan_versions)
+
     # ---- per-container sections -------------------------------------------
 
     def save_section(self, section: ContainerSection) -> None:
@@ -204,9 +223,7 @@ class EvidenceStore:
         ]
         if not pages:
             return None
-        return {
-            m.upper() for out in pages for m in _VULN_ID_RE.findall(json.dumps(out.items))
-        }
+        return {m.upper() for out in pages for m in _VULN_ID_RE.findall(json.dumps(out.items))}
 
     def section_for(self, stored: StoredOutput) -> str | None:
         """Name of the written section that covers this result, if any."""

@@ -390,7 +390,12 @@ records one section per host.
 
 **Vantage point (Option A).** The nmap/modbus servers run as stdio subprocesses
 *inside the agent container*; to give them the kali network position, run `network`
-with the agent container attached to the GRFICS DMZ and admin networks:
+with the agent container sharing **kali's network stack** (`network_mode:
+container:kali`): the same interfaces, IPs and routing table as kali, including its
+route to the ICS network through the router (192.168.95.0/24 via 192.168.90.200).
+kali must be running. Inside kali's stack `host.docker.internal` does not resolve,
+so the overlay points vLLM at Docker Desktop's host-gateway IP `192.168.65.254`
+(override with `AGENT_HOST_GATEWAY_IP`):
 
 ```bash
 docker compose -f deploy/agent/compose.yml \

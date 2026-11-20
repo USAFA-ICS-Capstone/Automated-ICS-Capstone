@@ -56,14 +56,21 @@ class ToolPolicy:
         # Phase 2: which servers are nmap (so their target is gated to the lab).
         self._nmap = mcp_config.argument_policy.nmap
         self._nmap_servers = {
-            s.name
-            for s in mcp_config.servers.values()
-            if s.enabled and s.role == "network_scanner"
+            s.name for s in mcp_config.servers.values() if s.enabled and s.role == "network_scanner"
         }
         self._nmap_networks = [
             ipaddress.ip_network(c, strict=False) for c in self._nmap.allowed_cidrs
         ]
         self._nmap_hostnames = {h.strip().lower() for h in self._nmap.allowed_hostnames}
+        # Phase 2: the Modbus server takes a per-call host; gate it to the lab.
+        self._modbus = mcp_config.argument_policy.modbus
+        self._modbus_servers = {
+            s.name for s in mcp_config.servers.values() if s.enabled and s.role == "ics_protocol"
+        }
+        self._modbus_networks = [
+            ipaddress.ip_network(c, strict=False) for c in self._modbus.allowed_cidrs
+        ]
+        self._modbus_hostnames = {h.strip().lower() for h in self._modbus.allowed_hostnames}
 
     # ---- configuration ----------------------------------------------------
 
@@ -93,38 +100,88 @@ class ToolPolicy:
         if tool == "findings_list":
             return self._check_findings_list(args)
         if server in self._nmap_servers:
-            return self._check_nmap(args)
+            decision = self._check_nmap(args)
+            forced = self._nmap.forced_flags.get(tool)
+            if decision.allowed and forced is not None:
+                # The model never chooses nmap flags: a forced-flag tool always
+                # runs the fixed scan from mcp_servers.yaml, whatever was sent.
+                decision.arguments["flags"] = forced
+            return decision
+        if server in self._modbus_servers:
+            return self._check_modbus(args)
         return PolicyDecision(True, arguments=args)
+
+    def _check_modbus(self, args: dict[str, Any]) -> PolicyDecision:
+        """Phase 2: a Modbus read may only target the lab.
+
+        ``host`` is optional: when omitted the server's configured default (the
+        PLC) is used, which is allowed. When given it must be a lab hostname or an
+        IP/subnet inside an allowed subnet (e.g. the field devices 192.168.95.10
+        -15). Only read tools are approved for this server, so there is nothing
+        else to gate.
+        """
+        if not self._modbus.restrict_hosts:
+            return PolicyDecision(True, arguments=args)
+        host = args.get("host")
+        if host in (None, ""):
+            return PolicyDecision(True, arguments=args)  # default device (PLC)
+        host = str(host).strip()
+        subnets = ", ".join(str(n) for n in self._modbus_networks) or "none"
+        if host.lower() in self._modbus_hostnames:
+            return PolicyDecision(True, arguments=args)
+        try:
+            requested = ipaddress.ip_network(host, strict=False)
+        except ValueError:
+            return PolicyDecision(
+                False,
+                f"Modbus host '{host}' is not a lab hostname or IP. Allowed hostnames: "
+                f"{', '.join(sorted(self._modbus_hostnames)) or 'none'}; allowed subnets: "
+                f"{subnets}.",
+            )
+        if any(
+            requested.version == net.version and requested.subnet_of(net)
+            for net in self._modbus_networks
+        ):
+            return PolicyDecision(True, arguments=args)
+        return PolicyDecision(False, f"Modbus host {host} is outside the lab subnets ({subnets}).")
 
     def _check_nmap(self, args: dict[str, Any]) -> PolicyDecision:
         """Phase 2: an nmap scan may only target the GRFICS lab.
 
-        The target must be an IP inside an allowed subnet, or a lab hostname.
-        Keeps the active scan from being pointed anywhere off the range.
+        The target must be one of: a lab hostname, an IP inside an allowed
+        subnet, or a subnet (CIDR) that lies entirely inside an allowed subnet
+        (e.g. "192.168.95.0/24" or "192.168.95.0/28"). Keeps the active scan
+        from being pointed anywhere off the range.
         """
         if not self._nmap.restrict_targets:
             return PolicyDecision(True, arguments=args)
         target = str(args.get("target", "")).strip()
         if not target:
             return PolicyDecision(False, "nmap scan requires a 'target'.")
-        host = target.lower()
-        if host in self._nmap_hostnames:
+        if target.lower() in self._nmap_hostnames:
             return PolicyDecision(True, arguments=args)
+
+        subnets = ", ".join(str(n) for n in self._nmap_networks) or "none"
         try:
-            ip = ipaddress.ip_address(target)
+            # A plain IP parses as a /32 (or /128) network, so this one path
+            # covers single addresses and CIDR ranges alike. strict=False
+            # accepts host bits set ("192.168.95.5/24" -> 192.168.95.0/24).
+            requested = ipaddress.ip_network(target, strict=False)
         except ValueError:
             return PolicyDecision(
                 False,
-                f"Target '{target}' is not an allowed lab host. Allowed hostnames: "
+                f"Target '{target}' is not a lab hostname, IP or subnet. Allowed hostnames: "
                 f"{', '.join(sorted(self._nmap_hostnames)) or 'none'}; allowed subnets: "
-                f"{', '.join(str(n) for n in self._nmap_networks) or 'none'}.",
+                f"{subnets} (an IP or CIDR inside these is allowed). Use exactly one target.",
             )
-        if any(ip in net for net in self._nmap_networks):
+        if any(
+            requested.version == net.version and requested.subnet_of(net)
+            for net in self._nmap_networks
+        ):
             return PolicyDecision(True, arguments=args)
         return PolicyDecision(
             False,
-            f"Target IP {target} is outside the lab subnets "
-            f"({', '.join(str(n) for n in self._nmap_networks) or 'none'}).",
+            f"Target {target} is outside the lab subnets ({subnets}).",
         )
 
     def _check_scan_image(self, args: dict[str, Any]) -> PolicyDecision:

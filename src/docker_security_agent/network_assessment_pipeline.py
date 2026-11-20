@@ -19,6 +19,7 @@ process - by two independent methods (static Docker metadata vs. live network).
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
 from collections.abc import Callable
@@ -62,6 +63,7 @@ PHASE2_ROLES = {"network_scanner", "ics_protocol"}
 
 # Written alongside the Phase-1 agent_report.{json,md} in the same run folder.
 NETWORK_REPORT = "network_report"
+PLAN_HISTORY = "plan_history.json"  # every version of the agent's own plan (h7)
 
 
 class NetworkAssessmentAborted(Exception):
@@ -98,8 +100,9 @@ def _modbus_target(settings: Settings) -> str:
     """The PLC Modbus endpoint, from the ics_protocol server's env (default plc:502)."""
     for server in settings.mcp.servers.values():
         if server.role == "ics_protocol":
-            host = server.env.get("MODBUS_HOST") or "plc"
-            port = server.env.get("MODBUS_PORT") or "502"
+            # ezhuk modbus-mcp settings (env prefix MODBUS_MCP_, nested delimiter __)
+            host = server.env.get("MODBUS_MCP_MODBUS__HOST") or "plc"
+            port = server.env.get("MODBUS_MCP_MODBUS__PORT") or "502"
             return f"{host}:{port}"
     return "plc:502"
 
@@ -178,6 +181,7 @@ async def run_network_assessment(settings: Settings, opts: NetworkOptions) -> Ne
         for s in active:
             s.evidence = store
         limits = settings.agent.limits
+        net = settings.agent.network
         agent = build_exposure_agent(
             bundle,
             mcp_servers=active,
@@ -202,7 +206,12 @@ async def run_network_assessment(settings: Settings, opts: NetworkOptions) -> Ne
             session=open_session(run_id, settings.session_db_path),
             tracing_enabled=settings.agent.tracing_enabled,
             run_id=run_id,
-            input_filter=ContextFilter(store, keep_recent=limits.keep_recent_tool_outputs),
+            input_filter=ContextFilter(
+                store,
+                keep_recent=limits.keep_recent_tool_outputs,
+                drop_reasoning=net.drop_old_thinking,
+                show_plan=True,
+            ),
             output_model=AgentAssessment,
         )
         merge_sections(outcome, list(store.sections.values()))
@@ -245,6 +254,8 @@ async def run_network_assessment(settings: Settings, opts: NetworkOptions) -> Ne
         report.model_dump_json(indent=2),
         render_agent_markdown(report, infos),
     )
+    if store.plan_versions:  # every version of the agent's own plan, for tracing
+        (md_path.parent / PLAN_HISTORY).write_text(json.dumps(store.plan_versions, indent=2))
     _say(opts, f"Network assessment finished: {outcome_status}, {len(report.findings)} finding(s)")
     return NetworkResult(
         run_id=run_id,

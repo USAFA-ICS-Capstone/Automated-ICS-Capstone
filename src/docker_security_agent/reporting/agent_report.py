@@ -72,7 +72,7 @@ def agent_findings(assessment: AgentAssessment) -> list[Finding]:
                 ],
                 explanation=f.explanation,
                 remediation="",  # the agent documents issues; analysts decide fixes (v9)
-                references=sorted({v.strip().upper() for v in f.vulnerability_ids if v.strip()}),
+                references=[],  # agent findings carry no CVE IDs (v15 / nx3)
             )
         )
     return findings

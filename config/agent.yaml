@@ -23,6 +23,13 @@ limits:
 session:
   db_path: data/agent_sessions.db
 
+# Phase-2 network agent (`docker-audit network`) only; Phase 1 ignores this.
+# (The network agent always keeps its own plan with update_plan; there is no switch.)
+network:
+  drop_old_thinking: true  # earlier thinking is not re-sent to the model (the
+                           # session DB still keeps it). Without this, Qwen saw all
+                           # 17 earlier thinking blocks and copied them in a loop
+
 # The SDK can upload traces to the OpenAI dashboard. That would send Docker
 # metadata to OpenAI even when running a local model, so it is OFF by default.
 tracing_enabled: false
