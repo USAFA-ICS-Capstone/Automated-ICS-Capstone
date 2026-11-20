@@ -1,0 +1,204 @@
+{
+  "report_version": "2.0",
+  "run_id": "net-20261118-165111-a208",
+  "generated_at": "2026-11-18T17:04:49.607769Z",
+  "model": {
+    "profile": "local-vllm",
+    "provider": "vllm",
+    "model": "Qwen/Qwen3-32B",
+    "settings": {
+      "name": "local-vllm",
+      "provider": "vllm",
+      "model": "Qwen/Qwen3-32B",
+      "base_url": "http://host.docker.internal:8000/v1",
+      "api_key_env": "VLLM_API_KEY",
+      "temperature": 0.3,
+      "max_tokens": 8192,
+      "timeout_seconds": 360.0,
+      "max_retries": 1,
+      "structured_output": "prompted",
+      "min_context_tokens": 16384
+    }
+  },
+  "prompt_version": "nx2",
+  "agent_status": "ok",
+  "snapshot_id": "",
+  "executive_summary": "The attacker can reach the HMI web interface (192.168.90.107) from the DMZ network, representing a high-severity exposure path to process control systems. No Modbus PLC (502/tcp) was reachable in the scanned networks, but the HMI's web proxy (8080/tcp) and the router's HTTP services (80, 8080, 8888) indicate potential segmentation failures. The 192.168.95.0/24 network remains unassessable due to a timeout, limiting visibility into the PLC's direct exposure status. The most dangerous path is through the HMI's web interface, which could allow lateral movement into the process network if credentials are compromised.",
+  "overall_risk": "high",
+  "findings": [
+    {
+      "id": "F-AGENT-a2f955330d",
+      "rule_id": "AGENT",
+      "title": "HMI Web Proxy Exposed",
+      "resource_type": "unknown",
+      "resource_name": "HMI.grficsv3_c-dmz-net",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:service_scan",
+          "resource": "HMI.grficsv3_c-dmz-net",
+          "path": "ports",
+          "value": "8080/tcp open http-proxy",
+          "note": ""
+        }
+      ],
+      "explanation": "An attacker could access the HMI's web interface from the DMZ, potentially bypassing segmentation to reach process control systems.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b09716fb75",
+      "rule_id": "AGENT",
+      "title": "Multiple HTTP Services Exposed",
+      "resource_type": "unknown",
+      "resource_name": "192.168.90.1",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:service_scan",
+          "resource": "192.168.90.1",
+          "path": "ports",
+          "value": "80/tcp open http nginx 1.22.1, 8080/tcp open http-proxy Werkzeug/2.3.7 Python/3.9.2, 8888/tcp open http aiohttp 3.10.11 (Python 3.11)",
+          "note": ""
+        }
+      ],
+      "explanation": "Open HTTP services on a network boundary host suggest potential misconfiguration or lack of segmentation, increasing risk of lateral movement toward ICS assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-b56b00b1ba",
+      "rule_id": "AGENT",
+      "title": "VNC Management Port Exposed",
+      "resource_type": "unknown",
+      "resource_name": "kali.grficsv3_c-dmz-net",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:service_scan",
+          "resource": "kali.grficsv3_c-dmz-net",
+          "path": "ports",
+          "value": "5900/tcp open vnc",
+          "note": ""
+        }
+      ],
+      "explanation": "VNC provides remote desktop access to a supporting infrastructure host (kali), but no direct path to the physical process is evident.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-734810764a",
+      "rule_id": "AGENT",
+      "title": "HMI Web Interface Exposed in DMZ",
+      "resource_type": "unknown",
+      "resource_name": "192.168.90.0/24",
+      "resource_id": "",
+      "category": "other",
+      "severity": "high",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:service_scan",
+          "resource": "192.168.90.0/24",
+          "path": "ports",
+          "value": "8080/tcp open http-proxy",
+          "note": ""
+        }
+      ],
+      "explanation": "The HMI's web interface is directly accessible from the DMZ, creating a potential attack vector that bypasses expected network segmentation. This could allow an attacker to interact with process control systems if authentication is weak or leaked.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-06728987e3",
+      "rule_id": "AGENT",
+      "title": "Network Boundary HTTP Services Exposed",
+      "resource_type": "unknown",
+      "resource_name": "192.168.90.0/24",
+      "resource_id": "",
+      "category": "other",
+      "severity": "medium",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:service_scan",
+          "resource": "192.168.90.0/24",
+          "path": "ports",
+          "value": "80/tcp open http, 8080/tcp open http-proxy, 8888/tcp open http",
+          "note": ""
+        }
+      ],
+      "explanation": "Multiple HTTP services on the network boundary host suggest a misconfigured perimeter. These services could be used for reconnaissance or lateral movement toward ICS assets.",
+      "remediation": "",
+      "references": []
+    },
+    {
+      "id": "F-AGENT-8ac123a935",
+      "rule_id": "AGENT",
+      "title": "Kali Host VNC Port Exposed",
+      "resource_type": "unknown",
+      "resource_name": "192.168.90.0/24",
+      "resource_id": "",
+      "category": "other",
+      "severity": "low",
+      "confidence": "low",
+      "status": "potential",
+      "source": "agent",
+      "evidence": [
+        {
+          "source": "agent:service_scan",
+          "resource": "192.168.90.0/24",
+          "path": "ports",
+          "value": "5900/tcp open vnc",
+          "note": ""
+        }
+      ],
+      "explanation": "The Kali host's VNC port is accessible, providing remote desktop access to a potential attacker's tooling environment. This is a low-severity exposure but could aid in establishing a foothold.",
+      "remediation": "",
+      "references": []
+    }
+  ],
+  "limitations": [
+    "192.168.95.0/24 network could not be scanned (timeout)"
+  ],
+  "errors": [],
+  "metrics": {
+    "started_at": "2026-11-18T16:51:11.302251Z",
+    "finished_at": "2026-11-18T17:04:49.607683Z",
+    "duration_seconds": 818.34,
+    "collection_seconds": 0.0,
+    "scan_seconds": 0.0,
+    "agent_seconds": 0.0,
+    "tool_calls_total": 8,
+    "tool_calls_agent": 8,
+    "tool_calls_blocked": 0,
+    "tool_calls_by_name": {
+      "nmap.nmap_scan": 2,
+      "nmap.service_scan": 3,
+      "harness.record_host_section": 3
+    },
+    "model_requests": 9,
+    "input_tokens": 106205,
+    "output_tokens": 8763,
+    "total_tokens": 114968
+  }
+}
